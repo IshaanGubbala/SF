@@ -12,22 +12,14 @@ import time
 AI_MODEL_PATH = "/Users/ishaangubbala/Documents/SF/deep_ai_model.keras"
 AI_SCALER_PATH = "/Users/ishaangubbala/Documents/SF/ai_scaler.pkl"
 
-# File paths for ML models and scaler
-ML_MODELS_PATHS = {
-    "RandomForest": "randomforest_model.pkl",
-    "GradientBoosting": "gradientboosting_model.pkl",
-    #"SVM": "svm_model.pkl"
-}
-ML_SCALER_PATH = "scaler.pkl"
-
 # Visualization settings
-PLOT_WINDOW = 500  # Number of data points to display in the plot
+PLOT_WINDOW = 2000  # Number of data points to display in the plot
 PLOT_CHANNELS = 4  # Number of channels to visualize
 
 # Channels to use
 TARGET_CHANNELS = [1, 2, 3, 4]
 WINDOW_LENGTH = 2  # seconds
-SAMPLING_RATE = 200  # Hz
+SAMPLING_RATE = 256  # Hz
 EPOCH_SIZE = WINDOW_LENGTH * SAMPLING_RATE
 
 # Labels for predictions
@@ -35,17 +27,12 @@ LABEL_MAPPING = {0: "Alzheimer's", 1: "Healthy"}
 
 # Pre-defined accuracies (from training)
 MODEL_ACCURACIES = {
-    "RandomForest": 0.5823,
-    "GradientBoosting": 0.5581,
-    #"SVM": 0.5215,
     "AI Model": 0.7104   # Replace with actual AI model training accuracy
 }
 
-# Load ML models and scalers
-print("Loading ML models and scalers...")
-ml_models = {name: joblib.load(path) for name, path in ML_MODELS_PATHS.items()}
-ml_scaler = joblib.load(ML_SCALER_PATH)
-print("ML models and scaler loaded.")
+# Add a buffer to store features from multiple intervals
+FEATURE_BUFFER_SIZE = 10  # Number of intervals to store
+feature_buffer = deque(maxlen=FEATURE_BUFFER_SIZE)
 
 # Load AI model and scaler
 print("Loading AI model and scaler...")
@@ -76,44 +63,17 @@ def extract_ai_features(data):
     right_power = data[2:, :].mean()
     hemisphere_sync = np.abs(left_power - right_power)
 
-    features = np.column_stack([theta_power, alpha_power, spatial_factor, complexity_factor, [hemisphere_sync] * len(data)])
+    # Add a placeholder for missing feature (if any)
+    placeholder_feature = 0.0
+
+    features = np.column_stack([theta_power, alpha_power, spatial_factor, complexity_factor, [hemisphere_sync] * len(data), [placeholder_feature] * len(data)])
     return clean_features(features.mean(axis=0))
-
-# Function to extract ML features
-def extract_ml_features(data):
-    psds = np.abs(np.fft.fft(data, n=256))[:, :(256 // 2)]
-    psds /= np.sum(psds, axis=1, keepdims=True)
-
-    freqs = np.fft.fftfreq(256, d=1 / SAMPLING_RATE)[:256 // 2]
-    delta = psds[:, (freqs >= 1) & (freqs < 4)].mean(axis=1)
-    theta = psds[:, (freqs >= 4) & (freqs < 8)].mean(axis=1)
-    alpha = psds[:, (freqs >= 8) & (freqs < 12)].mean(axis=1)
-    beta = psds[:, (freqs >= 12) & (freqs < 30)].mean(axis=1)
-    gamma = psds[:, (freqs >= 30) & (freqs <= 50)].mean(axis=1)
-
-    entropy = -np.sum(psds * np.log(psds + 1e-8), axis=1)
-
-    features = np.hstack([delta, theta, alpha, beta, gamma, entropy])
-    return clean_features(features)
-
-# Function to evaluate with ML models
-def evaluate_with_ml_models(models, scaler, features):
-    features_scaled = scaler.transform(features.reshape(1, -1))
-    predictions = {}
-    confidences = {}
-
-    for name, model in models.items():
-        if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(features_scaled)
-            pred_class = np.argmax(proba, axis=1)[0]
-            predictions[name] = pred_class
-            confidences[name] = proba[0][pred_class]
-        else:
-            pred_class = model.predict(features_scaled)[0]
-            predictions[name] = pred_class
-            confidences[name] = 1.0
-
-    return predictions, confidences
+# Function to aggregate features with buffer
+def evaluate_with_feature_buffer(features):
+    feature_buffer.append(features)
+    # Average features across the buffer
+    aggregated_features = np.mean(feature_buffer, axis=0)
+    return aggregated_features
 
 # Function to evaluate with AI model
 def evaluate_with_ai_model(model, scaler, features):
@@ -124,18 +84,13 @@ def evaluate_with_ai_model(model, scaler, features):
     return result, confidence
 
 # Function to display results
-def display_results(ml_predictions, ml_confidences, ai_result, ai_confidence, ai_features):
+def display_results(ai_result, ai_confidence, ai_features):
     print("\033c", end="")  # Clear console
     print(f"{'Model':<20} {'Prediction':<15} {'Accuracy (%)':<15} {'Confidence (%)':<15}")
     print("-" * 65)
 
-    for name, pred in ml_predictions.items():
-        accuracy = MODEL_ACCURACIES.get(name, "N/A") * 100
-        confidence = ml_confidences.get(name, 0) * 100
-        print(f"{name:<20} {LABEL_MAPPING.get(pred, 'Unknown'):<15} {accuracy:<15.2f} {confidence:<15.2f}")
-
     ai_accuracy = MODEL_ACCURACIES.get("AI Model", "N/A") * 100
-    print(f"\n{'AI Model':<20} {ai_result:<15} {ai_accuracy:<15.2f} {ai_confidence * 100:<15.2f}")
+    print(f"{'AI Model':<20} {ai_result:<15} {ai_accuracy:<15.2f} {ai_confidence * 100:<15.2f}")
 
     # Display factors for AI model
     print("\nFactors (AI Model):")
@@ -144,6 +99,9 @@ def display_results(ml_predictions, ml_confidences, ai_result, ai_confidence, ai
     print(f"Spatial Factor: {ai_features[2]:.4f}")
     print(f"Complexity Factor: {ai_features[3]:.4f}")
     print(f"Hemisphere Synchrony: {ai_features[4]:.4f}")
+
+    # Display confidence breakdown
+    print(f"\nConfidence Breakdown: Alzheimer's={ai_confidence:.4f}, Healthy={1 - ai_confidence:.4f}")
 
 # Function to visualize data
 def setup_visualization():
@@ -197,15 +155,16 @@ def main():
                 last_update_time = current_time
 
                 # Extract features
-                ml_features = extract_ml_features(eeg_data)
                 ai_features = extract_ai_features(eeg_data)
 
-                # Evaluate models
-                ml_predictions, ml_confidences = evaluate_with_ml_models(ml_models, ml_scaler, ml_features)
-                ai_result, ai_confidence = evaluate_with_ai_model(ai_model, ai_scaler, ai_features)
+                # Aggregate features with the buffer
+                aggregated_features = evaluate_with_feature_buffer(ai_features)
+
+                # Evaluate AI model with aggregated features
+                ai_result, ai_confidence = evaluate_with_ai_model(ai_model, ai_scaler, aggregated_features)
 
                 # Display results
-                display_results(ml_predictions, ml_confidences, ai_result, ai_confidence, ai_features)
+                display_results(ai_result, ai_confidence, aggregated_features)
 
                 if current_time - forced_update_time >= 10:
                     forced_update_time = current_time
