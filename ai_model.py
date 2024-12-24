@@ -1,401 +1,235 @@
 import os
-import numpy as np
-import pandas as pd
 import mne
-from sklearn.preprocessing import StandardScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout
-from tensorflow.keras.optimizers import Adam
-import joblib
-from scipy.signal import find_peaks
-from scipy.stats import entropy
-import warnings
-from tqdm import tqdm
-import nolds  # Ensure you have installed nolds: pip install nolds
-import concurrent.futures
+import numpy as np
 import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, Input, Reshape, Conv1D, MaxPooling1D, LSTM, BatchNormalization
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.regularizers import l2
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import KFold
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor
+import pandas as pd
+import glob
+import warnings
+from sklearn.utils.class_weight import compute_class_weight
 
-# Suppress warnings and set MNE logging level to ERROR
-warnings.filterwarnings("ignore")
-mne.set_log_level('ERROR')
+# Suppress warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs
 
-# Configure TensorFlow to use GPU if available
-physical_devices = tf.config.list_physical_devices('GPU')
-if physical_devices:
-    try:
-        for device in physical_devices:
-            tf.config.experimental.set_memory_growth(device, True)
-    except:
-        # Invalid device or cannot modify virtual devices once initialized.
-        pass
+# Configuration
+DATASET_PATHS = ["/Users/ishaangubbala/Documents/SF/ds004504/derivatives", "/Users/ishaangubbala/Documents/SF/ds004796"]
+PARTICIPANTS_FILES = {
+    "ds004504": "/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv",
+    "ds004796": "/Users/ishaangubbala/Documents/SF/ds004796/participants.tsv",
+}
+SAMPLING_RATE = 256
+FREQUENCY_BANDS = {
+    "Delta": (0.5, 4),
+    "Theta": (4, 8),
+    "Alpha": (8, 12),
+    "Beta": (12, 30),
+    "Gamma": (30, 100),
+}
 
-# Paths to data and model files
-DATA_PATH = "/Users/ishaangubbala/Documents/SF/ds004504/derivatives"  # Update if dataset is located elsewhere
-PARTICIPANTS_FILE = "./ds004504/participants.tsv"
-SCALER_PATH = "/Users/ishaangubbala/Documents/SF/ai_scaler.pkl"
-MODEL_PATH = "/Users/ishaangubbala/Documents/SF/deep_ai_model.keras"
+FEATURE_LABELS = [f"{band}_Power" for band in FREQUENCY_BANDS] + ["Entropy", "Spatial Complexity", "Temporal Complexity"]
 
-# Channels to use
-TARGET_CHANNELS = ['Fp1', 'Fp2', 'C3', 'C4']
+# Load participant metadata
+def load_participant_labels():
+    participant_labels = {}
+    for dataset, file_path in PARTICIPANTS_FILES.items():
+        participants_df = pd.read_csv(file_path, sep="\t")
+        print(f"Available columns in {file_path}: {participants_df.columns.tolist()}")
 
-# Frequency bands
-DELTA_BAND = (1, 4)
-THETA_BAND = (4, 8)
-ALPHA_BAND = (8, 12)
-BETA_BAND = (12, 30)
+        # Map participant IDs to labels
+        if dataset == "ds004504":
+            group_mapping = {
+                "A": 1,        # Alzheimer's
+                "C": 0,        # Healthy control
+                "F": 2,        # Frontotemporal dementia
+            }
+            participant_labels.update(participants_df.set_index("participant_id")["Group"].map(group_mapping).to_dict())
+        elif dataset == "ds004796":
+            participant_labels.update({row["participant_id"]: 0 for _, row in participants_df.iterrows()})
+    return participant_labels
 
-# ERP parameters
-ERP_EVENT_ID = {'Stimulus': 1}  # Update based on your event annotations
-ERP_TMIN = -0.2  # Start of each epoch (200 ms before the event)
-ERP_TMAX = 0.8   # End of each epoch (800 ms after the event)
+participant_labels = load_participant_labels()
 
-def load_eeg_data(subject_dir):
-    eeg_file = os.path.join(subject_dir, "eeg", f"{os.path.basename(subject_dir)}_task-eyesclosed_eeg.set")
-    if os.path.exists(eeg_file):
-        try:
-            raw = mne.io.read_raw_eeglab(eeg_file, preload=True)
-            raw.filter(1., 50., fir_design='firwin')  # Band-pass filter from 1-50Hz
+# Feature extraction functions (same as before)
+def compute_band_powers(data, sampling_rate):
+    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sampling_rate, verbose=False)
+    assert len(psd.shape) == 3, f"Unexpected PSD shape: {psd.shape}"
+    band_powers = {}
+    for band, (fmin, fmax) in FREQUENCY_BANDS.items():
+        idx_band = (freqs >= fmin) & (freqs <= fmax)
+        if not np.any(idx_band):
+            raise ValueError(f"No frequencies found in range {fmin}-{fmax} Hz for band {band}.")
+        band_powers[band] = np.mean(psd[:, :, idx_band], axis=2)
+    band_powers_mean = {band: np.mean(band_powers[band], axis=0) for band in band_powers}
+    return band_powers_mean
 
-            # Pick only the desired channels using the recommended method
-            available_channels = raw.ch_names
-            channels_to_pick = [ch for ch in TARGET_CHANNELS if ch in available_channels]
-            if not channels_to_pick:
-                return None
-            raw.pick_channels(channels_to_pick)
-            return raw
-        except:
-            return None
-    return None
+def compute_epoch_entropy(data):
+    entropies = []
+    for epoch in data:
+        p = np.abs(epoch) / np.sum(np.abs(epoch))  # Normalize signal
+        entropy = -np.sum(p * np.log2(p + 1e-12))  # Compute entropy
+        entropies.append(entropy)
+    return np.mean(entropies)  # Return average entropy for all epochs
 
-def extract_psd_features(raw):
-    try:
-        data = raw.get_data()  # shape: (n_channels, n_samples)
+def compute_spatial_complexity(data):
+    channel_variances = np.var(data, axis=-1)  # Variance of each channel
+    return np.var(channel_variances)  # Variance of variances
 
-        # Compute PSD using Welch's method
-        psds = []
-        for ch_data in data:
-            psd, freqs = mne.time_frequency.psd_array_welch(
-                ch_data, sfreq=raw.info['sfreq'], fmin=1, fmax=50, n_fft=256, n_overlap=128
-            )
-            psds.append(psd)
-
-        psds = np.array(psds)  # shape: (n_channels, n_freqs)
-        psds /= np.sum(psds, axis=-1, keepdims=True)  # Normalize
-
-        # Calculate power in specific frequency bands
-        delta_power = psds[:, (freqs >= DELTA_BAND[0]) & (freqs < DELTA_BAND[1])].mean(axis=-1)
-        theta_power = psds[:, (freqs >= THETA_BAND[0]) & (freqs < THETA_BAND[1])].mean(axis=-1)
-        alpha_power = psds[:, (freqs >= ALPHA_BAND[0]) & (freqs < ALPHA_BAND[1])].mean(axis=-1)
-        beta_power = psds[:, (freqs >= BETA_BAND[0]) & (freqs < BETA_BAND[1])].mean(axis=-1)
-
-        # Spatial factor (variance of the data)
-        spatial_factor = np.var(data, axis=1)
-
-        # Complexity factor (Shannon entropy)
-        complexity_factor = entropy(psds, base=2, axis=1)
-
-        # Combine PSD features
-        psd_features = np.hstack([
-            delta_power,
-            theta_power,
-            alpha_power,
-            beta_power,
-            spatial_factor,
-            complexity_factor
-        ])  # shape: (n_channels * 6, )
-
-        return psd_features
-    except:
-        return np.zeros(len(TARGET_CHANNELS) * 6)
-
-def extract_erp_features(raw):
-    try:
-        # Check if events are present
-        events, event_id = mne.events_from_annotations(raw)
-        if not events.size:
-            return np.zeros(len(TARGET_CHANNELS) * 2)  # Placeholder zeros
-
-        # Create epochs
-        epochs = mne.Epochs(raw, events, event_id=ERP_EVENT_ID, tmin=ERP_TMIN, tmax=ERP_TMAX, baseline=(None, 0), preload=True)
-
-        if len(epochs) == 0:
-            return np.zeros(len(TARGET_CHANNELS) * 2)  # No valid epochs
-
-        # Compute ERP (average over epochs)
-        evoked = epochs.average()
-
-        # Extract P300 and N200 latencies
-        erp_features = []
-        for ch in TARGET_CHANNELS:
-            if ch not in evoked.ch_names:
-                erp_features.extend([0, 0])  # Placeholder for missing channels
-                continue
-            ch_evoked = evoked.copy().pick_channels([ch]).get_data()[0]
-
-            times = epochs.times
-
-            # Find N200 (negative peak around 200 ms)
-            try:
-                n200_window = (times >= 0.15) & (times <= 0.25)
-                n200_data = ch_evoked[n200_window]
-                n200_times = times[n200_window]
-                if len(n200_data) == 0:
-                    n200_latency = 0
-                else:
-                    n200_idx = np.argmin(n200_data)
-                    n200_latency = n200_times[n200_idx]
-            except:
-                n200_latency = 0
-
-            # Find P300 (positive peak around 300 ms)
-            try:
-                p300_window = (times >= 0.25) & (times <= 0.35)
-                p300_data = ch_evoked[p300_window]
-                p300_times = times[p300_window]
-                if len(p300_data) == 0:
-                    p300_latency = 0
-                else:
-                    p300_idx = np.argmax(p300_data)
-                    p300_latency = p300_times[p300_idx]
-            except:
-                p300_latency = 0
-
-            erp_features.extend([n200_latency, p300_latency])
-
-        erp_features = np.array(erp_features)  # shape: (n_channels * 2, )
-        return erp_features
-    except:
-        return np.zeros(len(TARGET_CHANNELS) * 2)
-
-def tsallis_entropy(signal, q=2):
-    """Compute Tsallis entropy of a signal."""
-    probabilities, _ = np.histogram(signal, bins=30, density=True)
-    probabilities = probabilities + 1e-12  # Avoid log(0)
-    return (1 - np.sum(probabilities ** q)) / (q - 1)
-
-def extract_complexity_features(raw):
-    try:
-        data = raw.get_data()  # shape: (n_channels, n_samples)
-        tsallis_entropies = []
-        hfd_values = []
-        lz_complexities = []
-
-        for ch_data in data:
-            # Tsallis Entropy
-            te = tsallis_entropy(ch_data, q=2)
-            tsallis_entropies.append(te)
-
-            # Higuchi Fractal Dimension using nolds
-            try:
-                hfd = nolds.higuchi_fd(ch_data, k_max=5)
-            except:
-                hfd = 0
-            hfd_values.append(hfd)
-
-            # Lempel-Ziv Complexity
-            try:
-                # Binarize the signal
-                median = np.median(ch_data)
-                binary_signal = ''.join(['1' if x > median else '0' for x in ch_data])
-                # Calculate LZ complexity
-                lz = lempel_ziv_complexity(binary_signal)
-            except:
-                lz = 0
-            lz_complexities.append(lz)
-
-        complexity_features = np.hstack([
-            tsallis_entropies,
-            hfd_values,
-            lz_complexities
-        ])  # shape: (n_channels * 3, )
-        return complexity_features
-    except:
-        return np.zeros(len(TARGET_CHANNELS) * 3)
-
-def lempel_ziv_complexity(binary_sequence):
-    """Compute the Lempel-Ziv complexity of a binary sequence."""
-    i, k, l = 0, 1, 1
-    c = 1
-    n = len(binary_sequence)
-    while True:
-        try:
-            if binary_sequence[i + k - 1] == binary_sequence[l + k - 1]:
-                k += 1
-                l += 1
-            else:
-                if k > 1:
-                    c += 1
-                i += 1
-                if i == n:
-                    break
-                l = i + 1
-                k = 1
-            if l + k - 1 >= n:
-                if binary_sequence[i] != binary_sequence[l]:
-                    c += 1
-                break
-        except IndexError:
-            break
-    return c
-
-def extract_energy_landscape_features(raw):
-    try:
-        data = raw.get_data()  # shape: (n_channels, n_samples)
-        energy_landscape_features = []
-
-        for ch_data in data:
-            # Simplified energy landscape: compute moving average energy
-            energy = ch_data ** 2
-            window_size = int(raw.info['sfreq'] * 0.5)  # 500 ms window
-            if window_size < 1:
-                window_size = 1
-            moving_energy = np.convolve(energy, np.ones(window_size)/window_size, mode='valid')
-
-            # Find local minima
-            minima, _ = find_peaks(-moving_energy)
-            num_minima = len(minima)
-
-            # Find basin sizes (distance between minima)
-            basin_sizes = np.diff(minima)
-            avg_basin_size = np.mean(basin_sizes) if len(basin_sizes) > 0 else 0
-
-            energy_landscape_features.extend([num_minima, avg_basin_size])
-
-        energy_landscape_features = np.array(energy_landscape_features)  # shape: (n_channels * 2, )
-        return energy_landscape_features
-    except:
-        return np.zeros(len(TARGET_CHANNELS) * 2)
+def compute_temporal_complexity(data):
+    temporal_variances = np.var(data, axis=1)  # Variance over time for each channel
+    return np.mean(temporal_variances)  # Average temporal variance
 
 def extract_features(raw):
-    try:
-        psd_features = extract_psd_features(raw)
-        erp_features = extract_erp_features(raw)
-        complexity_features = extract_complexity_features(raw)
-        energy_landscape_features = extract_energy_landscape_features(raw)
+    raw.load_data()
+    raw.filter(0.5, 100, fir_design="firwin", verbose=False)
+    epochs = mne.make_fixed_length_epochs(raw, duration=1.0, overlap=0.5, verbose=False)
+    data = epochs.get_data()
 
-        # Combine all features into a single 1D array
-        features = np.hstack([
-            psd_features,
-            erp_features,
-            complexity_features,
-            energy_landscape_features
-        ])  # shape: (52, )
-        return features
-    except:
+    # Extract features
+    band_powers = compute_band_powers(data, SAMPLING_RATE)
+    entropy = compute_epoch_entropy(data)
+    spatial_complexity = compute_spatial_complexity(data)
+    temporal_complexity = compute_temporal_complexity(data)
+
+    features = np.hstack([
+        np.mean(band_powers[band]) for band in FREQUENCY_BANDS
+    ] + [entropy, spatial_complexity, temporal_complexity])
+    return features
+
+# Parallel processing
+def process_subject(file, participant_label):
+    try:
+        # Read the EEG file
+        print(f"Reading file: {file}")
+        raw = mne.io.read_raw_brainvision(file, preload=True)
+
+        # Preprocess the data (e.g., filtering, downsampling, etc.)
+        print(f"Preprocessing data for {file}")
+        raw.filter(1., 30., fir_design='firwin')  # Example bandpass filter
+        raw.resample(128)  # Example resampling
+
+        # Extract epochs or features
+        data = raw.get_data()
+        features = extract_features(data)  # Replace with your feature extraction function
+
+        # Return features and participant label
+        return features, participant_label
+
+    except Exception as e:
+        print(f"Error processing file {file}: {e}")
+        return None, None
+def process_subject_wrapper(args):
+    file, participant_labels = args
+    try:
+        return process_subject(file, participant_labels)
+    except Exception as e:
+        print(f"Error processing file {file}: {e}")
         return None
 
-def load_labels():
-    try:
-        participants = pd.read_csv(PARTICIPANTS_FILE, sep='\t')
-        group_mapping = {'A': 0, 'C': 1, 'F': 2}  # A=Alzheimer's, C=Control, F=FTD
-        labels = participants['Group'].map(group_mapping).values
-        return participants['participant_id'].values, labels
-    except:
-        return np.array([]), np.array([])
+def load_dataset_parallel():
+    """
+    Load the dataset using parallel processing.
+    """
+    # Generate file paths for EEG files
+    files = [
+        (file, participant_labels)
+        for file in sorted(glob.glob("./*/sub-*/*_task-rest_eeg.*"))
+    ]
 
-def train_and_save_scaler(features):
-    try:
-        scaler = StandardScaler()
-        scaler.fit(features)
-        joblib.dump(scaler, SCALER_PATH)
-        return scaler
-    except:
-        return None
+    if not files:
+        raise ValueError("No valid EEG files found. Check the file paths.")
 
-def train_and_save_ai_model(features_scaled, labels):
-    try:
-        num_classes = len(np.unique(labels))
-        model = Sequential([
-            Dense(256, activation='relu', input_shape=(features_scaled.shape[1],)),
-            Dropout(0.5),
-            Dense(128, activation='relu'),
-            Dropout(0.5),
-            Dense(num_classes, activation='softmax')  # Multi-class classification
-        ])
+    with ProcessPoolExecutor() as executor:
+        results = list(
+            tqdm(
+                executor.map(process_subject_wrapper, files),
+                total=len(files),
+                desc="Processing EEG Files",
+            )
+        )
 
-        model.compile(optimizer=Adam(learning_rate=0.001),
-                      loss='sparse_categorical_crossentropy',
-                      metrics=['accuracy'])
+    # Debug output to ensure results are valid
+    if not any(results):
+        raise ValueError("No valid results from processing. Check `process_subject`.")
 
-        # Split the data into training and validation sets manually
-        validation_fraction = 0.2
-        num_samples = features_scaled.shape[0]
-        num_val = int(num_samples * validation_fraction)
+    # Combine all the features and labels
+    features = np.concatenate([res[0] for res in results if res is not None], axis=0)
+    labels = np.concatenate([res[1] for res in results if res is not None], axis=0)
 
-        X_train, X_val = features_scaled[:-num_val], features_scaled[-num_val:]
-        y_train, y_val = labels[:-num_val], labels[-num_val:]
+    return features, labels
 
-        # Utilize TensorFlow's tf.data for efficient data loading
-        train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train))
-        train_dataset = train_dataset.shuffle(buffer_size=1024).batch(32).prefetch(tf.data.AUTOTUNE)
 
-        val_dataset = tf.data.Dataset.from_tensor_slices((X_val, y_val))
-        val_dataset = val_dataset.batch(32).prefetch(tf.data.AUTOTUNE)
+# TensorFlow model
+def create_cnn_lstm_model(input_dim):
+    model = Sequential([
+        Input(shape=(input_dim, 1)),
+        Conv1D(filters=32, kernel_size=3, activation="relu", padding="same"),
+        BatchNormalization(),
+        MaxPooling1D(pool_size=2, padding="same"),
+        Dropout(0.3),
+        LSTM(64, return_sequences=True, activation="tanh", kernel_regularizer=l2(0.001)),
+        BatchNormalization(),
+        Dropout(0.3),
+        LSTM(32, activation="tanh", kernel_regularizer=l2(0.001)),
+        Dense(32, activation="relu", kernel_regularizer=l2(0.001)),
+        Dropout(0.4),
+        Dense(1, activation="sigmoid")  # Output layer
+    ])
+    model.compile(optimizer=Adam(learning_rate=0.001), loss="binary_crossentropy", metrics=["accuracy"])
+    return model
 
-        # Use tqdm to display training progress
-        epochs = 100
-        for epoch in tqdm(range(epochs), desc="Training Model"):
-            model.fit(train_dataset, epochs=1, verbose=0, validation_data=val_dataset)
+# Train and evaluate model
+def train_model():
+    features, labels = load_dataset_parallel()
 
-        # Save model in native Keras format
-        model.save(MODEL_PATH)
-        return model
-    except:
-        return None
+    scaler = StandardScaler()
+    features = scaler.fit_transform(features)
 
-def process_subject(subject_id, label, data_path):
-    subject_dir = os.path.join(data_path, subject_id)
-    raw = load_eeg_data(subject_dir)
-    if raw is not None:
-        features = extract_features(raw)
-        if features is not None:
-            return features, label
-    return None, None
+    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
+    fold_accuracies = []
 
-def main():
-    participant_ids, labels = load_labels()
-    if len(participant_ids) == 0:
-        return
+    print("Starting 5-Fold Cross-Validation...")
 
-    all_features = []
-    all_labels = []
+    # Compute class weights
+    class_weights = compute_class_weight(
+        class_weight="balanced",
+        classes=np.unique(labels),
+        y=labels
+    )
+    class_weights = dict(enumerate(class_weights))
 
-    # Utilize ProcessPoolExecutor for parallel processing
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        # Prepare arguments for each subject
-        futures = [executor.submit(process_subject, sid, lbl, DATA_PATH) for sid, lbl in zip(participant_ids, labels)]
-        
-        # Use tqdm to display progress bar
-        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Processing Subjects"):
-            features, label = future.result()
-            if features is not None and label is not None:
-                all_features.append(features)
-                all_labels.append(label)
+    for fold, (train_idx, test_idx) in enumerate(kfold.split(features), 1):
+        print(f"Training Fold {fold}/5...")
+        X_train, X_test = features[train_idx], features[test_idx]
+        y_train, y_test = labels[train_idx], labels[test_idx]
 
-    # Combine all features and labels
-    if not all_features:
-        return
+        # Reshape for LSTM
+        X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
+        X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
 
-    X = np.vstack(all_features)
-    y = np.array(all_labels)
+        model = create_cnn_lstm_model(input_dim=X_train.shape[1])
+        model.fit(
+            X_train, y_train,
+            validation_split=0.2,
+            epochs=20, batch_size=32, verbose=1,
+            class_weight=class_weights
+        )
 
-    # Train scaler
-    scaler = train_and_save_scaler(X)
-    if scaler is not None:
-        # Scale features
-        X_scaled = scaler.transform(X)
+        loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
+        print(f"Fold {fold} Accuracy: {accuracy:.4f}")
+        fold_accuracies.append(accuracy)
 
-        # Train and save AI model
-        model = train_and_save_ai_model(X_scaled, y)
-        if model is not None:
-            # Optionally, you can verify the existence of the saved model
-            if os.path.exists(MODEL_PATH):
-                # Use tqdm to indicate completion
-                tqdm.write("Model training completed and saved successfully.")
-            else:
-                tqdm.write("Model training failed. Model file not found.")
-    else:
-        tqdm.write("Scaler training failed.")
+    print(f"Average Cross-Validation Accuracy: {np.mean(fold_accuracies):.4f}")
 
 if __name__ == "__main__":
-        main()
+    file = "./ds004504/sub-01/eeg/sub-01_task-rest_eeg.vhdr"  # Adjust path as needed
+    participant_label = participant_labels["sub-01"]  # Replace with actual label if available
+    print(process_subject(file, participant_label))
+

@@ -1,180 +1,226 @@
 import os
 import numpy as np
-import joblib
 import tensorflow as tf
+from tensorflow.keras.models import load_model
+from sklearn.preprocessing import StandardScaler
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
-from brainflow.data_filter import DataFilter, FilterTypes
-import matplotlib.pyplot as plt
 from collections import deque
 import time
+import pandas as pd
+import matplotlib.pyplot as plt
+import mne
+from pyprep.prep_pipeline import PrepPipeline
+from tabulate import tabulate
 
-# File paths for AI model and scaler
-AI_MODEL_PATH = "/Users/ishaangubbala/Documents/SF/deep_ai_model.keras"
-AI_SCALER_PATH = "/Users/ishaangubbala/Documents/SF/ai_scaler.pkl"
+# Suppress warnings
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-# Visualization settings
-PLOT_WINDOW = 2000  # Number of data points to display in the plot
-PLOT_CHANNELS = 4  # Number of channels to visualize
-
-# Channels to use
-TARGET_CHANNELS = [1, 2, 3, 4]
-WINDOW_LENGTH = 2  # seconds
-SAMPLING_RATE = 256  # Hz
-EPOCH_SIZE = WINDOW_LENGTH * SAMPLING_RATE
-
-# Labels for predictions
-LABEL_MAPPING = {0: "Alzheimer's", 1: "Healthy"}
-
-# Pre-defined accuracies (from training)
-MODEL_ACCURACIES = {
-    "AI Model": 0.7104   # Replace with actual AI model training accuracy
+# Configuration
+CHANNELS = ["Fp1", "Fp2", "C3", "C4"]
+SAMPLING_RATE = 500
+BUFFER_LENGTH = SAMPLING_RATE * 10  # 10 seconds buffer
+ANALYSIS_INTERVAL = 2 * 60  # 2 minutes
+DATA_INTERVAL = 0.005  # 5 ms
+FREQUENCY_BANDS = {
+    "Delta": (0.5, 4),
+    "Theta": (4, 8),
+    "Alpha": (8, 12),
+    "Beta": (12, 30),
+    "Gamma": (30, 100),
 }
 
-# Add a buffer to store features from multiple intervals
-FEATURE_BUFFER_SIZE = 10  # Number of intervals to store
-feature_buffer = deque(maxlen=FEATURE_BUFFER_SIZE)
+FEATURE_LABELS = [
+    f"{band}_Power" for band in FREQUENCY_BANDS
+] + ["Entropy", "Spatial Complexity", "Temporal Complexity"]
 
-# Load AI model and scaler
-print("Loading AI model and scaler...")
-ai_model = tf.keras.models.load_model(AI_MODEL_PATH)
-ai_scaler = joblib.load(AI_SCALER_PATH)
-print("AI model and scaler loaded.")
+# Visualization setup
+plt.ion()
+fig, axes = plt.subplots(len(CHANNELS), 1, sharex=True, figsize=(8, 6))
+for i, ch in enumerate(CHANNELS):
+    axes[i].set_xlim(0, BUFFER_LENGTH)
+    axes[i].set_ylim(-1.5, 1.5)
+    axes[i].set_title(ch)
+    axes[i].set_xlabel("Samples")
+    axes[i].set_ylabel("Amplitude")
+lines = [axes[i].plot([], [])[0] for i in range(len(CHANNELS))]
 
-# Function to clean extracted features
-def clean_features(features):
+# Initialize buffer
+buffer = deque(maxlen=BUFFER_LENGTH)
+
+# Load the model and scaler
+model = load_model("model.keras")
+scaler = pd.read_pickle("scaler.pkl")
+
+# Feature extraction functions
+def compute_band_powers(data, sampling_rate):
+    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sampling_rate, verbose=False)
+    band_powers = {}
+    for band, (fmin, fmax) in FREQUENCY_BANDS.items():
+        idx_band = (freqs >= fmin) & (freqs <= fmax)
+        band_powers[band] = np.mean(psd[:, :, idx_band], axis=2)
+    band_powers_mean = {band: np.mean(band_powers[band], axis=0) for band in band_powers}
+    return band_powers_mean
+
+def compute_epoch_entropy(data):
+    entropies = []
+    for epoch in data:
+        p = np.abs(epoch) / np.sum(np.abs(epoch))
+        entropy = -np.sum(p * np.log2(p + 1e-12))
+        entropies.append(entropy)
+    return np.mean(entropies)
+
+def compute_spatial_complexity(data):
+    channel_variances = np.var(data, axis=-1)
+    return np.var(channel_variances)
+
+def compute_temporal_complexity(data):
+    temporal_variances = np.var(data, axis=1)
+    return np.mean(temporal_variances)
+
+def create_custom_montage(channel_names):
     """
-    Replace NaNs or infinite values with zeros in the feature set.
+    Create a custom montage for the specified channel names.
     """
-    return np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+    from mne.channels import make_dig_montage
 
-# Function to extract AI features
-def extract_ai_features(data):
-    psds = np.abs(np.fft.fft(data, n=256))[:, :(256 // 2)]
-    psds /= np.sum(psds, axis=1, keepdims=True)
+    # Define approximate positions for your channels (example values in meters)
+    channel_positions = {
+        "Fp1": [-0.03, 0.08, 0],  # Example 3D coordinates
+        "Fp2": [0.03, 0.08, 0],
+        "C3": [-0.05, 0, 0],
+        "C4": [0.05, 0, 0],
+    }
 
-    freqs = np.fft.fftfreq(256, d=1 / SAMPLING_RATE)[:256 // 2]
-    theta_power = psds[:, (freqs >= 4) & (freqs < 8)].mean(axis=1)
-    alpha_power = psds[:, (freqs >= 8) & (freqs < 12)].mean(axis=1)
+    montage = make_dig_montage(ch_pos=channel_positions, coord_frame="head")
+    return montage
 
-    spatial_factor = np.var(data, axis=1)
-    complexity_factor = -np.sum(psds * np.log(psds + 1e-8), axis=1)
+def apply_prep_pipeline(raw):
+    """
+    Apply the PREP pipeline for preprocessing EEG data.
+    """
+    try:
+        # Create and set a custom montage
+        montage = create_custom_montage(CHANNELS)
+        raw.set_montage(montage)
 
-    left_power = data[:2, :].mean()
-    right_power = data[2:, :].mean()
-    hemisphere_sync = np.abs(left_power - right_power)
+        # Define PREP parameters
+        prep_params = {
+            "ref_chs": "average",  # Use average reference
+            "reref_chs": "all",   # Channels to re-reference
+            "line_freqs": [60],    # Line noise frequency for filtering
+        }
 
-    # Add a placeholder for missing feature (if any)
-    placeholder_feature = 0.0
+        prep = PrepPipeline(raw, prep_params, montage=None)
+        prep.fit()
 
-    features = np.column_stack([theta_power, alpha_power, spatial_factor, complexity_factor, [hemisphere_sync] * len(data), [placeholder_feature] * len(data)])
-    return clean_features(features.mean(axis=0))
-# Function to aggregate features with buffer
-def evaluate_with_feature_buffer(features):
-    feature_buffer.append(features)
-    # Average features across the buffer
-    aggregated_features = np.mean(feature_buffer, axis=0)
-    return aggregated_features
+        return prep.raw
+    except ValueError as e:
+        print(f"Error in PREP pipeline: {e}")
+        return raw  # Return the raw data without PREP processing
 
-# Function to evaluate with AI model
-def evaluate_with_ai_model(model, scaler, features):
-    features_scaled = scaler.transform(features.reshape(1, -1))
-    prediction = model.predict(features_scaled)
-    result = "Alzheimer's" if prediction[0][0] > 0.5 else "Healthy"
-    confidence = prediction[0][0] if result == "Alzheimer's" else 1 - prediction[0][0]
-    return result, confidence
+def extract_features(raw):
+    raw.load_data()
 
-# Function to display results
-def display_results(ai_result, ai_confidence, ai_features):
-    print("\033c", end="")  # Clear console
-    print(f"{'Model':<20} {'Prediction':<15} {'Accuracy (%)':<15} {'Confidence (%)':<15}")
-    print("-" * 65)
+    # Apply PREP pipeline
+    raw = apply_prep_pipeline(raw)
 
-    ai_accuracy = MODEL_ACCURACIES.get("AI Model", "N/A") * 100
-    print(f"{'AI Model':<20} {ai_result:<15} {ai_accuracy:<15.2f} {ai_confidence * 100:<15.2f}")
+    # Create fixed-length epochs
+    epochs = mne.make_fixed_length_epochs(raw, duration=1.0, overlap=0.5, verbose=False)
+    data = epochs.get_data()
 
-    # Display factors for AI model
-    print("\nFactors (AI Model):")
-    print(f"Theta Power: {ai_features[0]:.4f}")
-    print(f"Alpha Power: {ai_features[1]:.4f}")
-    print(f"Spatial Factor: {ai_features[2]:.4f}")
-    print(f"Complexity Factor: {ai_features[3]:.4f}")
-    print(f"Hemisphere Synchrony: {ai_features[4]:.4f}")
+    # Compute features
+    band_powers = compute_band_powers(data, SAMPLING_RATE)
+    entropy = compute_epoch_entropy(data)
+    spatial_complexity = compute_spatial_complexity(data)
+    temporal_complexity = compute_temporal_complexity(data)
 
-    # Display confidence breakdown
-    print(f"\nConfidence Breakdown: Alzheimer's={ai_confidence:.4f}, Healthy={1 - ai_confidence:.4f}")
+    features = np.hstack([
+        np.mean(band_powers[band]) for band in FREQUENCY_BANDS
+    ] + [
+        entropy, spatial_complexity, temporal_complexity
+    ]) # Scale all features down by 100
+    return features
 
-# Function to visualize data
-def setup_visualization():
-    fig, ax = plt.subplots(PLOT_CHANNELS, 1, figsize=(10, 8))
-    lines = []
-    data_buffers = [deque([0] * PLOT_WINDOW, maxlen=PLOT_WINDOW) for _ in range(PLOT_CHANNELS)]
+def clear_console():
+    os.system('cls' if os.name == 'nt' else 'clear')
 
-    for i in range(PLOT_CHANNELS):
-        line, = ax[i].plot(range(PLOT_WINDOW), data_buffers[i])
-        lines.append(line)
-        ax[i].set_ylim(-100, 100)
-        ax[i].set_title(f"Channel {i + 1}")
-    plt.tight_layout()
-    plt.ion()
-    plt.show()
-    return fig, ax, lines, data_buffers
-
-def update_visualization(lines, data_buffers, new_data):
-    for i, (line, buffer, channel_data) in enumerate(zip(lines, data_buffers, new_data)):
-        buffer.extend(channel_data)
-        line.set_ydata(buffer)
-    plt.pause(0.01)
-
-# Main function to stream data
+# Main function
 def main():
-    print("Setting up BrainFlow for OpenBCI Ganglion...")
     params = BrainFlowInputParams()
-    params.serial_port = ""  # Auto-detect
-    board = BoardShim(BoardIds.SYNTHETIC_BOARD.value, params)
+    params.serial_port = "COM3"  # Replace with your board's serial port
+    board_id = BoardIds.SYNTHETIC_BOARD  # Replace with your actual board ID if different
+    board = BoardShim(board_id, params)
 
     board.prepare_session()
     board.start_stream()
-    print("EEG stream started. Press Ctrl+C to stop.")
-
-    fig, ax, lines, data_buffers = setup_visualization()
-
-    last_update_time = time.time()
-    forced_update_time = time.time()
+    print("Starting real-time EEG analysis...")
 
     try:
+        last_analysis_time = time.time()
+
+        # Retrieve EEG channel names from the board
+        eeg_channel_names = [f"EEG {ch}" for ch in CHANNELS]
+
         while True:
-            data = board.get_current_board_data(EPOCH_SIZE)
-            eeg_data = data[TARGET_CHANNELS, :]
+            data = board.get_current_board_data(SAMPLING_RATE)
+            if data.shape[1] == 0:
+                continue
 
-            # Visualize data
-            update_visualization(lines, data_buffers, eeg_data)
+            # Scale raw data by dividing it by 100
+            data[:len(CHANNELS), :] /= 100
 
-            # Update every 2.5 seconds, forced every 10 seconds
-            current_time = time.time()
-            if current_time - last_update_time >= 0.1 or current_time - forced_update_time >= 10:
-                last_update_time = current_time
+            selected_data = data[:len(CHANNELS), :].T  # Shape: (samples, channels)
+            buffer.extend(selected_data)
 
-                # Extract features
-                ai_features = extract_ai_features(eeg_data)
+            # Update visualization
+            for i, line in enumerate(lines):
+                channel_data = [row[i] for row in buffer]
+                line.set_data(range(len(buffer)), channel_data)
+                axes[i].relim()
+                axes[i].autoscale_view()
+            plt.pause(0.001)
 
-                # Aggregate features with the buffer
-                aggregated_features = evaluate_with_feature_buffer(ai_features)
+            # Short-term analysis
+            if len(buffer) >= BUFFER_LENGTH:
+                short_term_data = np.array(buffer).T  # Shape: (channels, samples)
+                raw = mne.io.RawArray(short_term_data, mne.create_info(CHANNELS, SAMPLING_RATE, ch_types="eeg"))
 
-                # Evaluate AI model with aggregated features
-                ai_result, ai_confidence = evaluate_with_ai_model(ai_model, ai_scaler, aggregated_features)
+                features = extract_features(raw)
+                if features is not None:
+                    features_scaled = scaler.transform(features.reshape(1, -1))
+                    prediction = model.predict(features_scaled)[0, 0]
+                    clear_console()
 
-                # Display results
-                display_results(ai_result, ai_confidence, aggregated_features)
+                    # Prepare table for display
+                    table_data = [[label, value] for label, value in zip(FEATURE_LABELS, features)]
+                    table_data.append(["Prediction", prediction])
+                    print(tabulate(table_data, headers=["Feature", "Value"], tablefmt="grid"))
 
-                if current_time - forced_update_time >= 10:
-                    forced_update_time = current_time
+            if time.time() - last_analysis_time >= ANALYSIS_INTERVAL:
+                long_term_data = np.array(buffer).T  # Shape: (channels, samples)
+                raw = mne.io.RawArray(long_term_data, mne.create_info(CHANNELS, SAMPLING_RATE, ch_types="eeg"))
+
+                features = extract_features(raw)
+                if features is not None:
+                    features_scaled = scaler.transform(features.reshape(1, -1))
+                    prediction = model.predict(features_scaled)[0, 0]
+                    clear_console()
+
+                    # Prepare table for display
+                    table_data = [[label, value] for label, value in zip(FEATURE_LABELS, features)]
+                    table_data.append(["Prediction", prediction])
+                    print(tabulate(table_data, headers=["Feature", "Value"], tablefmt="grid"))
+                last_analysis_time = time.time()
+
+            time.sleep(DATA_INTERVAL)
 
     except KeyboardInterrupt:
-        print("\nStopping EEG stream.")
+        print("Exiting...")
+
     finally:
         board.stop_stream()
         board.release_session()
-
+        print("EEG session closed.")
 
 if __name__ == "__main__":
     main()
