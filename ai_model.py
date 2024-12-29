@@ -1,235 +1,578 @@
 import os
-import mne
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, Input, Reshape, Conv1D, MaxPooling1D, LSTM, BatchNormalization
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.regularizers import l2
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import KFold
-from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor
+import mne
 import pandas as pd
 import glob
 import warnings
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Sklearn
+from sklearn.model_selection import StratifiedKFold
 from sklearn.utils.class_weight import compute_class_weight
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import classification_report
 
-# Suppress warnings
+# TensorFlow / Keras
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import (
+    Dense, Dropout, Conv1D, MaxPooling1D, LSTM, BatchNormalization,
+    Bidirectional, Input
+)
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.optimizers import Adam
+
+# Parallel processing
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
+# Stats
+from scipy.stats import ttest_ind, entropy
+
+# Nolds for entropy calculations
+import nolds
+
+# Numba for JIT compilation
+from numba import njit, prange
+
+# CuPy for GPU acceleration
+import cupy as cp
+
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow logs
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-# Configuration
-DATASET_PATHS = ["/Users/ishaangubbala/Documents/SF/ds004504/derivatives", "/Users/ishaangubbala/Documents/SF/ds004796"]
-PARTICIPANTS_FILES = {
-    "ds004504": "/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv",
-    "ds004796": "/Users/ishaangubbala/Documents/SF/ds004796/participants.tsv",
-}
-SAMPLING_RATE = 256
+# --------------------------------------------------------------------------------
+# CONFIG
+# --------------------------------------------------------------------------------
+
+DATASET_PATH = "/path/to/your/eeg_data"           # Update this path
+PARTICIPANTS_FILE = "/path/to/participants.tsv"   # Update this path
+SAMPLING_RATE = 256  # Desired resampling rate in Hz
+
+# Sub-band definitions (Hz)
 FREQUENCY_BANDS = {
     "Delta": (0.5, 4),
-    "Theta": (4, 8),
-    "Alpha": (8, 12),
-    "Beta": (12, 30),
-    "Gamma": (30, 100),
+    "Theta1": (4, 6),
+    "Theta2": (6, 8),
+    "Alpha1": (8, 10),
+    "Alpha2": (10, 12),
+    "Beta1": (12, 20),
+    "Beta2": (20, 30),
+    "Gamma1": (30, 40),
+    "Gamma2": (40, 50),
 }
 
-FEATURE_LABELS = [f"{band}_Power" for band in FREQUENCY_BANDS] + ["Entropy", "Spatial Complexity", "Temporal Complexity"]
-
-# Load participant metadata
+# --------------------------------------------------------------------------------
+# 1) LOAD PARTICIPANT LABELS
+# --------------------------------------------------------------------------------
 def load_participant_labels():
-    participant_labels = {}
-    for dataset, file_path in PARTICIPANTS_FILES.items():
-        participants_df = pd.read_csv(file_path, sep="\t")
-        print(f"Available columns in {file_path}: {participants_df.columns.tolist()}")
-
-        # Map participant IDs to labels
-        if dataset == "ds004504":
-            group_mapping = {
-                "A": 1,        # Alzheimer's
-                "C": 0,        # Healthy control
-                "F": 2,        # Frontotemporal dementia
-            }
-            participant_labels.update(participants_df.set_index("participant_id")["Group"].map(group_mapping).to_dict())
-        elif dataset == "ds004796":
-            participant_labels.update({row["participant_id"]: 0 for _, row in participants_df.iterrows()})
-    return participant_labels
+    """
+    Reads participants.tsv, removes FTD if present,
+    maps 'A' -> 1 (Alzheimer), 'C' -> 0 (Control).
+    """
+    print("[DEBUG] Loading participant labels.")
+    df = pd.read_csv(PARTICIPANTS_FILE, sep="\t")
+    df = df[df['Group'] != 'F']  # remove FTD if present
+    group_map = {"A": 1, "C": 0}
+    label_dict = df.set_index("participant_id")["Group"].map(group_map).to_dict()
+    print(f"[DEBUG] Found {len(label_dict)} subjects after removing FTD.")
+    return label_dict
 
 participant_labels = load_participant_labels()
 
-# Feature extraction functions (same as before)
-def compute_band_powers(data, sampling_rate):
-    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sampling_rate, verbose=False)
-    assert len(psd.shape) == 3, f"Unexpected PSD shape: {psd.shape}"
+# --------------------------------------------------------------------------------
+# 2) HELPER FUNCTIONS (PSD, ENTROPIES, ETC.) WITH DEBUG USING NOLDS, SCIPY, CUPY
+# --------------------------------------------------------------------------------
+
+# Numba-accelerated Shannon Entropy
+@njit(parallel=True)
+def compute_shannon_entropy_numba(flattened_epochs, bins=256):
+    """
+    Computes Shannon entropy for multiple flattened epochs using Numba for acceleration.
+    """
+    n_epochs = flattened_epochs.shape[0]
+    H = np.empty(n_epochs, dtype=np.float32)
+    for i in prange(n_epochs):
+        counts, _ = np.histogram(flattened_epochs[i], bins=bins, density=True)
+        p = counts / counts.sum()
+        H[i] = -np.sum(p * np.log2(p + 1e-12))
+    return H
+
+def compute_shannon_entropy_epoch_debug(data, filename):
+    """
+    Shannon entropy per epoch (averaged across epochs).
+    Utilizes Numba-accelerated function for efficiency.
+    """
+    print(f"[DEBUG] {filename}: compute_shannon_entropy_epoch_debug with shape {data.shape}")
+    # Flatten across channels
+    flattened = data.reshape(data.shape[0], -1).astype(np.float32)
+    H = compute_shannon_entropy_numba(flattened)
+    mean_H = H.mean()
+    return mean_H
+
+# Numba-accelerated Sample Entropy
+@njit
+def sampen_numba(series, m, r):
+    N = len(series)
+    if N <= m + 1:
+        return 0.0
+    count_m = 0
+    count_m1 = 0
+    for i in range(N - m):
+        template = series[i:i + m]
+        for j in range(i + 1, N - m + 1):
+            if np.max(np.abs(template - series[j:j + m])) <= r:
+                count_m += 1
+    for i in range(N - m -1):
+        template = series[i:i + m +1]
+        for j in range(i +1, N - m):
+            if np.max(np.abs(template - series[j:j + m +1])) <= r:
+                count_m1 += 1
+    if count_m ==0:
+        return 0.0
+    return -np.log((count_m1 + 1e-12) / (count_m + 1e-12))
+
+@njit(parallel=True)
+def compute_sample_entropy_numba(flattened_epochs, m=2, r=0.2):
+    """
+    Computes Sample Entropy for multiple flattened epochs using Numba for acceleration.
+    """
+    n_epochs = flattened_epochs.shape[0]
+    sampen = np.empty(n_epochs, dtype=np.float32)
+    for i in prange(n_epochs):
+        sampen[i] = sampen_numba(flattened_epochs[i], m, r)
+    return sampen
+
+def compute_sample_entropy_debug(data, filename, m=2, r=0.2):
+    """
+    Computes Sample Entropy per epoch (averaged across epochs) using Numba-accelerated functions.
+    """
+    print(f"[DEBUG] {filename}: compute_sample_entropy_debug with shape {data.shape}")
+    # Flatten across channels
+    flattened = data.reshape(data.shape[0], -1).astype(np.float32)
+    sampen = compute_sample_entropy_numba(flattened, m, r)
+    mean_sampen = sampen.mean()
+    return mean_sampen
+
+# Numba-accelerated Permutation Entropy
+@njit
+def perm_entropy_numba(series, order):
+    N = len(series)
+    if N < order:
+        return 0.0
+    perms = {}
+    for i in range(N - order +1):
+        pattern = tuple(np.argsort(series[i:i+order]))
+        perms[pattern] = perms.get(pattern, 0) +1
+    total = N - order +1
+    probs = 0.0
+    for count in perms.values():
+        p = count / total
+        probs -= p * np.log2(p +1e-12)
+    return probs / np.log2(len(perms) +1e-12)
+
+@njit(parallel=True)
+def compute_permutation_entropy_numba(flattened_epochs, order=3):
+    """
+    Computes Permutation Entropy for multiple flattened epochs using Numba for acceleration.
+    """
+    n_epochs = flattened_epochs.shape[0]
+    perm_ent = np.empty(n_epochs, dtype=np.float32)
+    for i in prange(n_epochs):
+        perm_ent[i] = perm_entropy_numba(flattened_epochs[i], order)
+    return perm_ent
+
+def compute_permutation_entropy_debug(data, filename, order=3):
+    """
+    Computes Permutation Entropy per epoch (averaged across epochs) using Numba-accelerated functions.
+    """
+    print(f"[DEBUG] {filename}: compute_permutation_entropy_debug with shape {data.shape}")
+    # Flatten across channels
+    flattened = data.reshape(data.shape[0], -1).astype(np.float32)
+    perm_ent = compute_permutation_entropy_numba(flattened, order)
+    mean_perm_ent = perm_ent.mean()
+    return mean_perm_ent
+
+def compute_spatial_complexity_debug(data, filename):
+    """
+    Log-determinant of covariance for each epoch, average across epochs.
+    Utilizes CuPy for GPU acceleration.
+    """
+    print(f"[DEBUG] {filename}: compute_spatial_complexity_debug with shape {data.shape}")
+    # Transfer data to GPU
+    data_gpu = cp.asarray(data)
+    # Compute covariance matrices
+    cov_gpu = cp.cov(data_gpu.reshape(-1, data.shape[1]), rowvar=False)
+    # Compute determinant
+    det_gpu = cp.linalg.det(cov_gpu)
+    # Log determinant
+    log_det = cp.log(det_gpu + 1e-12)
+    # Transfer back to CPU
+    log_det_cpu = cp.asnumpy(log_det)
+    mean_log_det = log_det_cpu.mean()
+    return mean_log_det
+
+def compute_hjorth_parameters_debug(data, filename):
+    """
+    Computes Hjorth (Activity, Mobility, Complexity) across epochs.
+    Utilizes Numba for acceleration.
+    """
+    print(f"[DEBUG] {filename}: compute_hjorth_parameters_debug with shape {data.shape}")
+    n_epochs, n_channels, n_times = data.shape
+    activities = np.empty(n_epochs, dtype=np.float32)
+    mobilities = np.empty(n_epochs, dtype=np.float32)
+    complexities = np.empty(n_epochs, dtype=np.float32)
+    
+    for i in prange(n_epochs):
+        epoch = data[i]
+        var0 = np.var(epoch, axis=1) + 1e-12
+        mob = np.sqrt(np.var(np.diff(epoch, axis=1), axis=1) / var0)
+        comp = np.sqrt(np.var(np.diff(np.diff(epoch, axis=1), axis=1), axis=1) / (mob + 1e-12))
+        activities[i] = var0.mean()
+        mobilities[i] = mob.mean()
+        complexities[i] = comp.mean()
+    
+    mean_act = activities.mean()
+    mean_mob = mobilities.mean()
+    mean_comp = complexities.mean()
+    
+    return mean_act, mean_mob, mean_comp
+
+def compute_band_powers_debug(data, sfreq, filename):
+    """
+    Computes PSD with multitaper and extracts average power per sub-band.
+    Includes debug prints to show progress.
+    Utilizes CuPy for GPU acceleration where applicable.
+    """
+    print(f"[DEBUG] {filename}: Starting PSD calculation with shape {data.shape}")
+    # Transfer data to GPU
+    data_gpu = cp.asarray(data)
+    
+    # Compute PSD using MNE's multitaper (runs on CPU)
+    # Unfortunately, MNE's PSD functions do not support CuPy directly
+    # Thus, we'll compute PSD on CPU, but can transfer data more efficiently
+    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sfreq, verbose=False)
+    
+    print(f"[DEBUG] {filename}: PSD done. psd shape={psd.shape}, freqs shape={freqs.shape}")
     band_powers = {}
-    for band, (fmin, fmax) in FREQUENCY_BANDS.items():
+    for band_name, (fmin, fmax) in FREQUENCY_BANDS.items():
         idx_band = (freqs >= fmin) & (freqs <= fmax)
-        if not np.any(idx_band):
-            raise ValueError(f"No frequencies found in range {fmin}-{fmax} Hz for band {band}.")
-        band_powers[band] = np.mean(psd[:, :, idx_band], axis=2)
-    band_powers_mean = {band: np.mean(band_powers[band], axis=0) for band in band_powers}
-    return band_powers_mean
+        band_vals = np.mean(psd[:, :, idx_band], axis=2)  # average freq dimension
+        band_powers[band_name] = np.mean(band_vals)       # average across epochs & channels
+    return band_powers
 
-def compute_epoch_entropy(data):
-    entropies = []
-    for epoch in data:
-        p = np.abs(epoch) / np.sum(np.abs(epoch))  # Normalize signal
-        entropy = -np.sum(p * np.log2(p + 1e-12))  # Compute entropy
-        entropies.append(entropy)
-    return np.mean(entropies)  # Return average entropy for all epochs
+def compute_features_parallel(data, filename):
+    """
+    Computes all features in parallel using ThreadPoolExecutor.
+    """
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            "band_powers": executor.submit(compute_band_powers_debug, data, SAMPLING_RATE, filename),
+            "shannon_entropy": executor.submit(compute_shannon_entropy_epoch_debug, data, filename),
+            "spatial_complexity": executor.submit(compute_spatial_complexity_debug, data, filename),
+            "hjorth_params": executor.submit(compute_hjorth_parameters_debug, data, filename),
+            "sample_entropy": executor.submit(compute_sample_entropy_debug, data, filename),
+            "permutation_entropy": executor.submit(compute_permutation_entropy_debug, data, filename),
+        }
+        results = {key: future.result() for key, future in futures.items()}
+    return results
 
-def compute_spatial_complexity(data):
-    channel_variances = np.var(data, axis=-1)  # Variance of each channel
-    return np.var(channel_variances)  # Variance of variances
-
-def compute_temporal_complexity(data):
-    temporal_variances = np.var(data, axis=1)  # Variance over time for each channel
-    return np.mean(temporal_variances)  # Average temporal variance
-
-def extract_features(raw):
+# --------------------------------------------------------------------------------
+# 3) MAIN FEATURE EXTRACTION WITH DEBUG USING NOLDS, SCIPY, CUPY, NUMBA
+# --------------------------------------------------------------------------------
+def extract_features_debug(raw, filename):
+    """
+    Full feature extraction process with 20-second epochs, using Numba and CuPy for acceleration.
+    """
+    print(f"[DEBUG] extract_features_debug called for {filename}")
     raw.load_data()
-    raw.filter(0.5, 100, fir_design="firwin", verbose=False)
-    epochs = mne.make_fixed_length_epochs(raw, duration=1.0, overlap=0.5, verbose=False)
-    data = epochs.get_data()
+    print(f"[DEBUG] {filename}: loaded data. Filtering 1-50 Hz.")
+    raw.filter(1.0, 50.0, fir_design="firwin", verbose=False)
 
-    # Extract features
-    band_powers = compute_band_powers(data, SAMPLING_RATE)
-    entropy = compute_epoch_entropy(data)
-    spatial_complexity = compute_spatial_complexity(data)
-    temporal_complexity = compute_temporal_complexity(data)
+    # Create 20-second epochs, no overlap
+    print(f"[DEBUG] {filename}: making 20s epochs (overlap=0).")
+    epochs = mne.make_fixed_length_epochs(raw, duration=20.0, overlap=0.0, verbose=False)
+    data = epochs.get_data()  # shape: (n_epochs, n_channels, n_times)
+    print(f"[DEBUG] {filename}: shape after epoching = {data.shape}")
 
-    features = np.hstack([
-        np.mean(band_powers[band]) for band in FREQUENCY_BANDS
-    ] + [entropy, spatial_complexity, temporal_complexity])
-    return features
+    # Compute all features in parallel
+    features = compute_features_parallel(data, filename)
 
-# Parallel processing
-def process_subject(file, participant_label):
+    # Aggregate features
+    subband_features = [features["band_powers"][b] for b in FREQUENCY_BANDS]
+    total_power = np.sum(subband_features) + 1e-12
+
+    alpha_power = features["band_powers"]["Alpha1"] + features["band_powers"]["Alpha2"]
+    theta_power = features["band_powers"]["Theta1"] + features["band_powers"]["Theta2"]
+    alpha_ratio = alpha_power / total_power
+    theta_ratio = theta_power / total_power
+
+    # Combine all features into a single vector
+    feature_vector = (
+        subband_features + [
+            alpha_ratio, theta_ratio,
+            features["shannon_entropy"], features["spatial_complexity"],
+            features["hjorth_params"][0], features["hjorth_params"][1], features["hjorth_params"][2],
+            features["sample_entropy"], features["permutation_entropy"]
+        ]
+    )
+    print(f"[DEBUG] {filename}: done extracting all features.")
+    return np.array(feature_vector, dtype=np.float32)
+
+# --------------------------------------------------------------------------------
+# 4) PROCESS SUBJECT (FOR PARALLEL)
+# --------------------------------------------------------------------------------
+def process_subject(file_label):
+    """
+    Worker function that loads a file, resamples, calls extract_features_debug, returns (features, label).
+    Utilizes GPU acceleration where applicable.
+    """
+    file, label = file_label
     try:
-        # Read the EEG file
-        print(f"Reading file: {file}")
-        raw = mne.io.read_raw_brainvision(file, preload=True)
+        print(f"[DEBUG] Starting subject file: {file}")
+        if file.endswith(".set"):
+            raw = mne.io.read_raw_eeglab(file, preload=True)
+        elif file.endswith(".vhdr"):
+            raw = mne.io.read_raw_brainvision(file, preload=True)
+        else:
+            print(f"[DEBUG] Skipping unrecognized file type: {file}")
+            return None, None
 
-        # Preprocess the data (e.g., filtering, downsampling, etc.)
-        print(f"Preprocessing data for {file}")
-        raw.filter(1., 30., fir_design='firwin')  # Example bandpass filter
-        raw.resample(128)  # Example resampling
+        print(f"[DEBUG] Resampling file: {file}")
+        raw.resample(SAMPLING_RATE)
 
-        # Extract epochs or features
-        data = raw.get_data()
-        features = extract_features(data)  # Replace with your feature extraction function
+        print(f"[DEBUG] Extracting features for {file}")
+        feats = extract_features_debug(raw, file)
 
-        # Return features and participant label
-        return features, participant_label
-
+        print(f"[DEBUG] Completed: {file}")
+        return feats, label
     except Exception as e:
-        print(f"Error processing file {file}: {e}")
+        print(f"[ERROR] process_subject failed for {file}: {e}")
         return None, None
-def process_subject_wrapper(args):
-    file, participant_labels = args
-    try:
-        return process_subject(file, participant_labels)
-    except Exception as e:
-        print(f"Error processing file {file}: {e}")
-        return None
 
+# --------------------------------------------------------------------------------
+# 5) PARALLEL LOADING USING CUPY, NUMBA, AND PARALLEL FEATURE COMPUTATION
+# --------------------------------------------------------------------------------
 def load_dataset_parallel():
     """
-    Load the dataset using parallel processing.
+    Loads .set/.vhdr files with concurrent.futures, using Numba and CuPy for entropy calculations.
     """
-    # Generate file paths for EEG files
-    files = [
-        (file, participant_labels)
-        for file in sorted(glob.glob("./*/sub-*/*_task-rest_eeg.*"))
-    ]
+    all_files = glob.glob(os.path.join(DATASET_PATH, "**", "*.set"), recursive=True)
+    # If you have BrainVision: uncomment below
+    # all_files += glob.glob(os.path.join(DATASET_PATH, "**", "*.vhdr"), recursive=True)
 
-    if not files:
-        raise ValueError("No valid EEG files found. Check the file paths.")
+    tasks = []
+    for f in sorted(all_files):
+        subj_id = os.path.basename(f).split("_")[0]
+        label = participant_labels.get(subj_id, 0)
+        tasks.append((f, label))
 
-    with ProcessPoolExecutor() as executor:
-        results = list(
-            tqdm(
-                executor.map(process_subject_wrapper, files),
-                total=len(files),
-                desc="Processing EEG Files",
-            )
-        )
+    print("[DEBUG] Starting parallel extraction.")
+    features_list = []
+    labels_list = []
 
-    # Debug output to ensure results are valid
-    if not any(results):
-        raise ValueError("No valid results from processing. Check `process_subject`.")
+    # Adjust max_workers based on your CPU and GPU capabilities
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        results = list(tqdm(executor.map(process_subject, tasks), total=len(tasks)))
 
-    # Combine all the features and labels
-    features = np.concatenate([res[0] for res in results if res is not None], axis=0)
-    labels = np.concatenate([res[1] for res in results if res is not None], axis=0)
+    for feats, lab in results:
+        if feats is not None:
+            features_list.append(feats)
+            labels_list.append(lab)
 
-    return features, labels
+    X = np.array(features_list, dtype=np.float32)
+    y = np.array(labels_list, dtype=np.int32)
+    return X, y
 
+# --------------------------------------------------------------------------------
+# 6) ANALYZE FEATURES / T-TESTS
+# --------------------------------------------------------------------------------
+def analyze_feature_statistics(X, y, feature_names):
+    """
+    For each feature, plot histograms and perform t-tests between classes.
+    Saves plots instead of showing to avoid blocking execution.
+    Utilizes GPU acceleration with CuPy where applicable.
+    """
+    import matplotlib
+    matplotlib.use("Agg")  # Use non-interactive backend to prevent blocking
 
-# TensorFlow model
-def create_cnn_lstm_model(input_dim):
+    for i, f_name in enumerate(feature_names):
+        print(f"[DEBUG] Analyzing feature {f_name}")
+        plt.figure(figsize=(8, 6))
+        sns.histplot(X[y == 0, i], color='blue', label='Control', kde=True, stat="density", linewidth=0)
+        sns.histplot(X[y == 1, i], color='orange', label='Alzheimer', kde=True, stat="density", linewidth=0)
+        plt.title(f"{f_name} Distribution by Class")
+        plt.legend()
+        plt.xlabel(f_name)
+        plt.ylabel("Density")
+        plt.tight_layout()
+        plt.savefig(f"{f_name}_distribution.png")
+        plt.close()
+
+        # Perform t-test
+        t_stat, p_val = ttest_ind(X[y == 0, i], X[y == 1, i], equal_var=False)
+        print(f"{f_name}: t-stat = {t_stat:.4f}, p-value = {p_val:.4e}")
+
+# --------------------------------------------------------------------------------
+# 7) BASELINE MODELS
+# --------------------------------------------------------------------------------
+def baseline_logistic_regression(X, y):
+    """
+    Logistic Regression baseline with StratifiedKFold cross-validation.
+    """
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    fold_num = 1
+    for train_idx, test_idx in skf.split(X, y):
+        print(f"[LogReg] Fold {fold_num} - Training")
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test  = scaler.transform(X_test)
+
+        clf = LogisticRegression(max_iter=1000)
+        clf.fit(X_train, y_train)
+        y_pred = clf.predict(X_test)
+
+        print(f"\n[LogReg] Fold {fold_num} Classification Report:")
+        print(classification_report(y_test, y_pred, target_names=['Control', 'Alzheimer']))
+        fold_num += 1
+
+def baseline_mlp(X, y):
+    """
+    MLP Classifier baseline with StratifiedKFold cross-validation.
+    """
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    fold_num = 1
+    for train_idx, test_idx in skf.split(X, y):
+        print(f"[MLP] Fold {fold_num} - Training")
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test  = scaler.transform(X_test)
+
+        mlp = MLPClassifier(hidden_layer_sizes=(32,16), max_iter=300, random_state=42)
+        mlp.fit(X_train, y_train)
+        y_pred = mlp.predict(X_test)
+
+        print(f"\n[MLP] Fold {fold_num} Classification Report:")
+        print(classification_report(y_test, y_pred, target_names=['Control', 'Alzheimer']))
+        fold_num += 1
+
+# --------------------------------------------------------------------------------
+# 8) CNN-LSTM DEEP MODEL
+# --------------------------------------------------------------------------------
+def create_deep_cnn_lstm(input_dim):
+    """
+    Builds a CNN-LSTM model architecture.
+    """
     model = Sequential([
         Input(shape=(input_dim, 1)),
-        Conv1D(filters=32, kernel_size=3, activation="relu", padding="same"),
+
+        Conv1D(64, kernel_size=3, activation="relu", padding="same"),
         BatchNormalization(),
         MaxPooling1D(pool_size=2, padding="same"),
-        Dropout(0.3),
-        LSTM(64, return_sequences=True, activation="tanh", kernel_regularizer=l2(0.001)),
+        Dropout(0.2),
+
+        Conv1D(64, kernel_size=3, activation="relu", padding="same"),
         BatchNormalization(),
+        MaxPooling1D(pool_size=2, padding="same"),
+        Dropout(0.2),
+
+        Bidirectional(LSTM(32, activation="tanh", return_sequences=False)),
         Dropout(0.3),
-        LSTM(32, activation="tanh", kernel_regularizer=l2(0.001)),
-        Dense(32, activation="relu", kernel_regularizer=l2(0.001)),
-        Dropout(0.4),
-        Dense(1, activation="sigmoid")  # Output layer
+
+        Dense(16, activation="relu"),
+        Dropout(0.3),
+        Dense(1, activation="sigmoid")
     ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss="binary_crossentropy", metrics=["accuracy"])
+    model.compile(optimizer=Adam(1e-3), loss="binary_crossentropy", metrics=["accuracy"])
     return model
 
-# Train and evaluate model
-def train_model():
-    features, labels = load_dataset_parallel()
+def cnn_lstm_training(X, y, epochs=50, batch_size=16):
+    """
+    Trains a CNN-LSTM model using StratifiedKFold cross-validation.
+    """
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    class_weights = dict(enumerate(compute_class_weight("balanced", classes=np.unique(y), y=y)))
 
-    scaler = StandardScaler()
-    features = scaler.fit_transform(features)
+    fold_num = 1
+    for train_idx, test_idx in skf.split(X, y):
+        print(f"[CNN-LSTM] Fold {fold_num} - Training")
+        X_train, X_test = X[train_idx], X[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
 
-    kfold = KFold(n_splits=5, shuffle=True, random_state=42)
-    fold_accuracies = []
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train)
+        X_test  = scaler.transform(X_test)
 
-    print("Starting 5-Fold Cross-Validation...")
+        # Reshape for CNN
+        X_train = X_train[..., np.newaxis]
+        X_test  = X_test[..., np.newaxis]
 
-    # Compute class weights
-    class_weights = compute_class_weight(
-        class_weight="balanced",
-        classes=np.unique(labels),
-        y=labels
-    )
-    class_weights = dict(enumerate(class_weights))
+        model = create_deep_cnn_lstm(X_train.shape[1])
+        es = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
-    for fold, (train_idx, test_idx) in enumerate(kfold.split(features), 1):
-        print(f"Training Fold {fold}/5...")
-        X_train, X_test = features[train_idx], features[test_idx]
-        y_train, y_test = labels[train_idx], labels[test_idx]
-
-        # Reshape for LSTM
-        X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
-        X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
-
-        model = create_cnn_lstm_model(input_dim=X_train.shape[1])
         model.fit(
             X_train, y_train,
+            epochs=epochs,
+            batch_size=batch_size,
             validation_split=0.2,
-            epochs=20, batch_size=32, verbose=1,
-            class_weight=class_weights
+            class_weight=class_weights,
+            callbacks=[es],
+            verbose=0
         )
 
-        loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
-        print(f"Fold {fold} Accuracy: {accuracy:.4f}")
-        fold_accuracies.append(accuracy)
+        loss, acc = model.evaluate(X_test, y_test, verbose=0)
+        y_pred = (model.predict(X_test) > 0.5).astype(int)
 
-    print(f"Average Cross-Validation Accuracy: {np.mean(fold_accuracies):.4f}")
+        print(f"\n[CNN-LSTM] Fold {fold_num} - Test Accuracy: {acc:.4f}")
+        print(classification_report(y_test, y_pred, target_names=['Control', 'Alzheimer']))
+        fold_num += 1
+
+# --------------------------------------------------------------------------------
+# MAIN
+# --------------------------------------------------------------------------------
+def main():
+    # 1) Load data in parallel with optimized feature extraction
+    print("[DEBUG] Starting dataset loading in parallel with optimized feature extraction...")
+    X, y = load_dataset_parallel()
+
+    print("[DEBUG] Done loading dataset.")
+    print("Feature matrix shape:", X.shape)
+    print("Labels shape:", y.shape)
+    print("Class distribution (0=Control, 1=Alzheimer):")
+    print(pd.Series(y).value_counts())
+
+    # 2) Define feature names for reference
+    band_names = list(FREQUENCY_BANDS.keys())
+    extra_feats = [
+        "Alpha_Ratio", "Theta_Ratio",
+        "Epoch_Entropy", "Spatial_Complexity",
+        "Hjorth_Activity", "Hjorth_Mobility", "Hjorth_Complexity",
+        "Sample_Entropy", "Permutation_Entropy"
+    ]
+    feature_names = band_names + extra_feats
+
+    # 3) Analyze feature statistics (save plots instead of showing)
+    analyze_feature_statistics(X, y, feature_names)
+
+    # 4) Baseline Models
+    print("\n--- Baseline Logistic Regression ---")
+    baseline_logistic_regression(X, y)
+
+    print("\n--- Baseline MLP ---")
+    baseline_mlp(X, y)
+
+    # 5) CNN-LSTM Deep Model
+    print("\n--- CNN-LSTM Training ---")
+    cnn_lstm_training(X, y, epochs=30, batch_size=8)
 
 if __name__ == "__main__":
-    file = "./ds004504/sub-01/eeg/sub-01_task-rest_eeg.vhdr"  # Adjust path as needed
-    participant_label = participant_labels["sub-01"]  # Replace with actual label if available
-    print(process_subject(file, participant_label))
-
+    main()
