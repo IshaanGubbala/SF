@@ -41,8 +41,10 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow warnings if any
 # --------------------------------------------------------------------------------
 
 # Paths (Update these paths accordingly)
-DATASET_PATH = "/Users/ishaangubbala/Documents/SF/ds004504/derivatives"           # Path to EEG .set files
-PARTICIPANTS_FILE = "/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv"   # Path to participants.tsv
+DS004504_PATH = "/Users/ishaangubbala/Documents/SF/ds004504/derivatives"           # Path to ds004504 EEG .set files
+DS003800_PATH = "/Users/ishaangubbala/Documents/SF/ds003800/"             # Path to ds003800 EEG .set files
+PARTICIPANTS_FILE_DS004504 = "/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv"   # Path to ds004504 participants.tsv
+PARTICIPANTS_FILE_DS003800 = "/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv"   # Path to ds003800 participants.tsv
 
 # Sampling rate (Hz)
 SAMPLING_RATE = 256
@@ -74,23 +76,52 @@ os.makedirs(PLOTS_DIR, exist_ok=True)
 # 1) LOAD PARTICIPANT LABELS
 # --------------------------------------------------------------------------------
 
-def load_participant_labels(participants_file):
+def load_participant_labels(ds004504_participants_file, ds003800_participants_file):
     """
-    Reads participants.tsv, removes FTD if present,
-    maps 'A' -> 1 (Alzheimer), 'C' -> 0 (Control).
+    Reads participants.tsv files from both datasets.
+    Assigns labels:
+        - For ds004504: 'A' -> 1 (Alzheimer), 'C' -> 0 (Control).
+        - For ds003800: All participants are labeled as 1 (Alzheimer).
+    
+    Args:
+        ds004504_participants_file: Path to ds004504 participants.tsv.
+        ds003800_participants_file: Path to ds003800 participants.tsv.
+    
+    Returns:
+        label_dict: Dictionary mapping participant_id to label.
     """
-    print("[DEBUG] Loading participant labels.")
-    df = pd.read_csv(participants_file, sep="\t")
-    if 'Group' not in df.columns or 'participant_id' not in df.columns:
-        raise ValueError("participants.tsv must contain 'Group' and 'participant_id' columns.")
-    df = df[df['Group'] != 'F']  # Remove FTD if present
-    group_map = {"A": 1, "C": 0}
-    df = df[df['Group'].isin(group_map.keys())]  # Ensure only A and C groups are present
-    label_dict = df.set_index("participant_id")["Group"].map(group_map).to_dict()
-    print(f"[DEBUG] Found {len(label_dict)} subjects after removing FTD and ensuring valid groups.")
+    label_dict = {}
+    group_map_ds004504 = {"A": 1, "C": 0}
+    
+    # Process ds004504 participants.tsv
+    print(f"[DEBUG] Loading participant labels from {ds004504_participants_file}.")
+    df_ds004504 = pd.read_csv(ds004504_participants_file, sep="\t")
+    if 'Group' not in df_ds004504.columns or 'participant_id' not in df_ds004504.columns:
+        raise ValueError("ds004504 participants.tsv must contain 'Group' and 'participant_id' columns.")
+    df_ds004504 = df_ds004504[df_ds004504['Group'] != 'F']  # Remove FTD if present
+    df_ds004504 = df_ds004504[df_ds004504['Group'].isin(group_map_ds004504.keys())]  # Ensure only A and C groups are present
+    labels_ds004504 = df_ds004504.set_index("participant_id")["Group"].map(group_map_ds004504).to_dict()
+    label_dict.update(labels_ds004504)
+    print(f"[DEBUG] ds004504: Loaded {len(labels_ds004504)} participant labels.")
+    
+    # Process ds003800 participants.tsv
+    print(f"[DEBUG] Loading participant labels from {ds003800_participants_file}.")
+    df_ds003800 = pd.read_csv(ds003800_participants_file, sep="\t")
+    if 'Group' not in df_ds003800.columns or 'participant_id' not in df_ds003800.columns:
+        raise ValueError("ds003800 participants.tsv must contain 'Group' and 'participant_id' columns.")
+    # Assign label 1 to all participants in ds003800
+    labels_ds003800 = df_ds003800.set_index("participant_id")["Group"].apply(lambda x: 1).to_dict()
+    label_dict.update(labels_ds003800)
+    print(f"[DEBUG] ds003800: Loaded {len(labels_ds003800)} participant labels (all labeled as 1).")
+    
+    print(f"[DEBUG] Total participants after combining datasets: {len(label_dict)}")
     return label_dict
 
-participant_labels = load_participant_labels(PARTICIPANTS_FILE)
+# Load participant labels from both datasets
+participant_labels = load_participant_labels(
+    ds004504_participants_file=PARTICIPANTS_FILE_DS004504,
+    ds003800_participants_file=PARTICIPANTS_FILE_DS003800
+)
 
 # --------------------------------------------------------------------------------
 # 2) FEATURE EXTRACTION FUNCTIONS
@@ -218,16 +249,41 @@ def process_subject(args):
 
 def load_dataset_parallel():
     """
-    Load dataset in parallel using ProcessPoolExecutor.
+    Load datasets in parallel using ProcessPoolExecutor from multiple dataset paths.
+    
+    Returns:
+        X: Feature matrix (NumPy array).
+        y: Labels (NumPy array).
     """
-    all_files = glob.glob(os.path.join(DATASET_PATH, "**", "*.set"), recursive=True)
+    dataset_paths = [DS004504_PATH, DS003800_PATH]
+    all_files = []
+    dataset_origin = {}  # Dictionary to track which dataset each file belongs to
+    
+    for dataset_path in dataset_paths:
+        # Define glob pattern based on dataset
+        if 'ds003800' in dataset_path:
+            # Only include 'Rest' task files
+            pattern = os.path.join(dataset_path, "**", "*_task-Rest_eeg.set")
+        else:
+            # Include all '.set' files from ds004504
+            pattern = os.path.join(dataset_path, "**", "*.set")
+        
+        files = glob.glob(pattern, recursive=True)
+        all_files.extend(files)
+        for f in files:
+            dataset_origin[f] = dataset_path  # Map file to its dataset
+    
     tasks = []
     for f in all_files:
-        participant_id = os.path.basename(f).split('_')[0]  # Adjust split as per your filename convention
-        label = participant_labels.get(participant_id, 0)  # Default to 0 if not found
-        tasks.append((f, label))
+        # Extract participant ID; adjust based on your filename convention
+        participant_id = os.path.basename(f).split('_')[0]  # Example: 'sub-001'
+        label = participant_labels.get(participant_id, None)  # Get label; set to None if not found
+        if label is not None:
+            tasks.append((f, label))
+        else:
+            print(f"[WARNING] Label not found for participant {participant_id}. Skipping file {f}.")
     
-    print(f"[DEBUG] Found {len(tasks)} EEG files to process.")
+    print(f"[DEBUG] Found {len(tasks)} EEG files to process from all datasets.")
     features_list = []
     labels_list = []
     
@@ -235,13 +291,13 @@ def load_dataset_parallel():
         results = list(tqdm(executor.map(process_subject, tasks), total=len(tasks)))
     
     for feat, lab in results:
-        if feat is not None:
+        if feat is not None and lab is not None:
             features_list.append(feat)
             labels_list.append(lab)
     
     X = np.array(features_list, dtype=np.float32)
     y = np.array(labels_list, dtype=np.int32)
-    print(f"[DEBUG] Dataset loaded with {X.shape[0]} samples and {X.shape[1]} features.")
+    print(f"[DEBUG] Combined Dataset loaded with {X.shape[0]} samples and {X.shape[1]} features.")
     return X, y
 
 # --------------------------------------------------------------------------------
@@ -335,7 +391,7 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         X_test_scaled = scaler.transform(X_test)
 
         # Define Logistic Regression Classifier
-        clf = LogisticRegression(max_iter=1000, random_state=42)
+        clf = LogisticRegression(max_iter=2000, random_state=42)
         clf.fit(X_train_scaled, y_train)
         y_pred = clf.predict(X_test_scaled)
         y_proba = clf.predict_proba(X_test_scaled)[:, 1]
@@ -428,14 +484,14 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
 
         # Define MLP Classifier
         clf = MLPClassifier(
-            hidden_layer_sizes=(64, 16, 2,),   # Two hidden layers with 64 and 16 neurons respectively
+            hidden_layer_sizes=(128, 60, 76, 16,),   # Two hidden layers with 64 and 16 neurons respectively
             activation='relu',               # Activation function
             solver='adam',                   # Optimization algorithm
-            max_iter=2000,                   # Maximum number of iterations
+            max_iter=3000,                   # Maximum number of iterations
             random_state=42,                 # For reproducibility
             early_stopping=True,             # Stop early if no improvement
             validation_fraction=0.1,         # Fraction for validation
-            n_iter_no_change=10              # Number of epochs with no improvement to wait
+            n_iter_no_change=15              # Number of epochs with no improvement to wait
         )
         clf.fit(X_train_scaled, y_train)
         y_pred = clf.predict(X_test_scaled)
