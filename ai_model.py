@@ -317,17 +317,12 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
     """
     Logistic Regression baseline with StratifiedKFold cross-validation.
     Saves trained models and ROC curves.
-    
-    Args:
-        X: Feature matrix.
-        y: Labels.
-        feature_names: List of feature names.
-        models_dir: Directory to save trained models.
-        plots_dir: Directory to save ROC curves and confusion matrices.
+    Returns a list of trained models and their metrics.
     """
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
     fold_num = 1
     metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1_score': [], 'roc_auc': []}
+    models = []
     
     for train_idx, test_idx in skf.split(X, y):
         print(f"\n[LogReg] Fold {fold_num} - Training")
@@ -391,6 +386,14 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         joblib.dump(scaler, scaler_filename)
         print(f"[LogReg] Fold {fold_num} model and scaler saved.")
 
+        # Store model and its ROC AUC for later selection
+        models.append({
+            'model': clf,
+            'scaler': scaler,
+            'roc_auc': roc_auc,
+            'fold': fold_num
+        })
+
         fold_num += 1
 
     # Aggregate and Print Average Metrics
@@ -399,22 +402,19 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         avg = np.mean(metrics[metric])
         std = np.std(metrics[metric])
         print(f"{metric.capitalize()}: {avg:.4f} ± {std:.4f}")
+    
+    return models, metrics
 
 def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR):
     """
     MLP Classifier baseline with StratifiedKFold cross-validation.
     Saves trained models and ROC curves.
-    
-    Args:
-        X: Feature matrix.
-        y: Labels.
-        feature_names: List of feature names.
-        models_dir: Directory to save trained models.
-        plots_dir: Directory to save ROC curves and confusion matrices.
+    Returns a list of trained models and their metrics.
     """
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
     fold_num = 1
     metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1_score': [], 'roc_auc': []}
+    models = []
     
     for train_idx, test_idx in skf.split(X, y):
         print(f"\n[MLP] Fold {fold_num} - Training")
@@ -428,14 +428,14 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
 
         # Define MLP Classifier
         clf = MLPClassifier(
-            hidden_layer_sizes=(64, 16),   # Single hidden layer with 32 neurons
-            activation='relu',          # Activation function
-            solver='adam',              # Optimization algorithm
-            max_iter=1000,               # Maximum number of iterations
-            random_state=42,            # For reproducibility
-            early_stopping=True,        # Stop early if no improvement
-            validation_fraction=0.1,    # Fraction for validation
-            n_iter_no_change=10         # Number of epochs with no improvement to wait
+            hidden_layer_sizes=(64, 16, 2,),   # Two hidden layers with 64 and 16 neurons respectively
+            activation='relu',               # Activation function
+            solver='adam',                   # Optimization algorithm
+            max_iter=2000,                   # Maximum number of iterations
+            random_state=42,                 # For reproducibility
+            early_stopping=True,             # Stop early if no improvement
+            validation_fraction=0.1,         # Fraction for validation
+            n_iter_no_change=10              # Number of epochs with no improvement to wait
         )
         clf.fit(X_train_scaled, y_train)
         y_pred = clf.predict(X_test_scaled)
@@ -487,6 +487,14 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
         joblib.dump(scaler, scaler_filename)
         print(f"[MLP] Fold {fold_num} model and scaler saved.")
 
+        # Store model and its ROC AUC for later selection
+        models.append({
+            'model': clf,
+            'scaler': scaler,
+            'roc_auc': roc_auc,
+            'fold': fold_num
+        })
+
         fold_num += 1
 
     # Aggregate and Print Average Metrics
@@ -495,9 +503,104 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
         avg = np.mean(metrics[metric])
         std = np.std(metrics[metric])
         print(f"{metric.capitalize()}: {avg:.4f} ± {std:.4f}")
+    
+    return models, metrics
 
 # --------------------------------------------------------------------------------
-# 6) MAIN PIPELINE
+# 6) SELECT AND RETRAIN BEST MODELS
+# --------------------------------------------------------------------------------
+
+def select_best_model(models, method_name='Method'):
+    """
+    Selects the best model based on ROC AUC from a list of models.
+    
+    Args:
+        models: List of dictionaries containing 'model', 'scaler', 'roc_auc', and 'fold'.
+        method_name: Name of the method (e.g., 'LogReg', 'MLP') for logging.
+    
+    Returns:
+        best_model: The model object with the highest ROC AUC.
+        best_scaler: The scaler object associated with the best model.
+    """
+    best = max(models, key=lambda x: x['roc_auc'])
+    print(f"\n[{method_name}] Best Model: Fold {best['fold']} with ROC AUC = {best['roc_auc']:.4f}")
+    return best['model'], best['scaler']
+
+def retrain_model_on_full_data(model, scaler, X, y, method_name='Method', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR):
+    """
+    Retrains the given model on the entire dataset and evaluates its performance.
+    
+    Args:
+        model: The machine learning model to retrain.
+        scaler: The scaler associated with the model.
+        X: Feature matrix.
+        y: Labels.
+        method_name: Name of the method for logging.
+        models_dir: Directory to save the retrained model.
+        plots_dir: Directory to save evaluation plots.
+    
+    Returns:
+        retrained_model: The model retrained on the entire dataset.
+    """
+    print(f"\n[{method_name}] Retraining on the entire dataset.")
+
+    # Feature Scaling
+    X_scaled = scaler.fit_transform(X)
+
+    # Retrain the model
+    model.fit(X_scaled, y)
+
+    # Save the retrained model and scaler
+    retrained_model_filename = os.path.join(models_dir, f"{method_name.lower()}_retrained.joblib")
+    retrained_scaler_filename = os.path.join(models_dir, f"{method_name.lower()}_retrained_scaler.joblib")
+    joblib.dump(model, retrained_model_filename)
+    joblib.dump(scaler, retrained_scaler_filename)
+    print(f"[{method_name}] Retrained model and scaler saved.")
+
+    # Predict on the entire dataset
+    y_pred = model.predict(X_scaled)
+    y_proba = model.predict_proba(X_scaled)[:, 1]
+
+    # Compute Metrics
+    acc = accuracy_score(y, y_pred)
+    prec = precision_score(y, y_pred, zero_division=0)
+    rec = recall_score(y, y_pred, zero_division=0)
+    f1 = f1_score(y, y_pred, zero_division=0)
+    roc_auc = roc_auc_score(y, y_proba)
+
+    print(f"\n[{method_name}] Performance on Entire Dataset:")
+    print(f"Accuracy: {acc:.4f}")
+    print(f"Precision: {prec:.4f}")
+    print(f"Recall: {rec:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    print(f"ROC AUC: {roc_auc:.4f}")
+
+    # Plot ROC Curve
+    fpr, tpr, _ = roc_curve(y, y_proba)
+    plt.figure()
+    plt.plot(fpr, tpr, label=f'{method_name} Retrained (AUC = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], 'k--')  # Diagonal line
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title(f'{method_name} ROC Curve - Retrained on Entire Dataset')
+    plt.legend(loc='lower right')
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_dir, f"{method_name.lower()}_retrained_roc_curve.png"))
+    plt.close()
+
+    # Plot Confusion Matrix
+    cm = confusion_matrix(y, y_pred)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Control', 'Alzheimer'])
+    disp.plot(cmap='Oranges')
+    plt.title(f"{method_name} Confusion Matrix - Retrained on Entire Dataset")
+    plt.tight_layout()
+    plt.savefig(os.path.join(plots_dir, f"{method_name.lower()}_retrained_confusion_matrix.png"))
+    plt.close()
+
+    return model
+
+# --------------------------------------------------------------------------------
+# 7) MAIN PIPELINE
 # --------------------------------------------------------------------------------
 
 def main():
@@ -523,12 +626,23 @@ def main():
     
     # 4) Baseline Models
     print("\n--- Baseline Logistic Regression ---")
-    baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
+    logreg_models, logreg_metrics = baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
     
     print("\n--- Baseline MLP ---")
-    baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
+    mlp_models, mlp_metrics = baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
     
-    print("\n[INFO] All baseline models have been trained and saved.")
+    # 5) Select Best Models
+    best_logreg_model, best_logreg_scaler = select_best_model(logreg_models, method_name='LogReg')
+    best_mlp_model, best_mlp_scaler = select_best_model(mlp_models, method_name='MLP')
+    
+    # 6) Retrain Best Models on Entire Dataset
+    retrained_logreg = retrain_model_on_full_data(best_logreg_model, best_logreg_scaler, X, y, method_name='LogReg', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
+    retrained_mlp = retrain_model_on_full_data(best_mlp_model, best_mlp_scaler, X, y, method_name='MLP', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
+    
+    # 7) Report Final Accuracy
+    # Since we've already printed the accuracy in retrain_model_on_full_data, you can also aggregate it here if needed.
+    
+    print("\n[INFO] Best models have been retrained on the entire dataset and their accuracies have been reported.")
 
 if __name__ == "__main__":
     main()
