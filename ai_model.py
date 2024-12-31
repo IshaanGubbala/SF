@@ -7,7 +7,8 @@ import warnings
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
-
+import matplotlib.pyplot as plt
+import networkx as nx
 # Scikit-learn imports
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
@@ -188,7 +189,7 @@ def extract_features_parallel(data):
     """
     Compute features in parallel, ensuring all features are correctly added to the feature vector.
     """
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         # Submit tasks
         future_band_powers = executor.submit(compute_band_powers, data, SAMPLING_RATE)
         future_shannon_entropy = executor.submit(compute_shannon_entropy, data)
@@ -409,7 +410,7 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         metrics['f1_score'].append(f1)
         metrics['roc_auc'].append(roc_auc)
 
-        # Print Classification Report
+        # Print Classaification Report
         print(f"\n[LogReg] Fold {fold_num} Classification Report:")
         print(classification_report(y_test, y_pred, target_names=['Control', 'Alzheimer']))
 
@@ -461,6 +462,32 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
     
     return models, metrics
 
+# Assuming 'retrained_mlp' is your trained MLP model
+# and you have 'feature_names' and 'class_names' defined.
+
+def plot_mlp_weights(model, layer=0, figsize=(12, 8)):
+    """
+    Plots the weight matrix of a specified hidden layer in the MLP.
+
+    Args:
+        model: Trained MLPClassifier model.
+        layer: Index of the hidden layer to visualize (0-based).
+        figsize: Size of the figure.
+    """
+    if layer >= len(model.coefs_) -1:
+        raise ValueError("Layer index out of range.")
+    
+    weight_matrix = model.coefs_[layer]
+    
+    plt.figure(figsize=figsize)
+    sns.heatmap(weight_matrix, cmap='viridis', center=0)
+    plt.title(f"MLP Weights - Layer {layer +1} (Input to Hidden Layer {layer +1})")
+    plt.xlabel(f"Neurons in Hidden Layer {layer +1}")
+    plt.ylabel(f"Input Features")
+    plt.tight_layout()
+    plt.show()
+
+
 def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR):
     """
     MLP Classifier baseline with StratifiedKFold cross-validation.
@@ -481,10 +508,11 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
+        
 
         # Define MLP Classifier
         clf = MLPClassifier(
-            hidden_layer_sizes=(128, 60, 76, 16,),   # Two hidden layers with 64 and 16 neurons respectively
+            hidden_layer_sizes=(1024, 512,256,128, 60, 76, 16,),   # Two hidden layers with 64 and 16 neurons respectively
             activation='relu',               # Activation function
             solver='adam',                   # Optimization algorithm
             max_iter=3000,                   # Maximum number of iterations
@@ -602,7 +630,7 @@ def retrain_model_on_full_data(model, scaler, X, y, method_name='Method', models
 
     # Feature Scaling
     X_scaled = scaler.fit_transform(X)
-
+    
     # Retrain the model
     model.fit(X_scaled, y)
 
@@ -655,6 +683,26 @@ def retrain_model_on_full_data(model, scaler, X, y, method_name='Method', models
 
     return model
 
+def plot_logreg_coefficients(model, feature_names):
+    """
+    Plots the coefficients of a Logistic Regression model.
+
+    Args:
+        model: Trained LogisticRegression model.
+        feature_names: List of feature names.
+    """
+    coefficients = model.coef_[0]
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=coefficients, y=feature_names, palette='coolwarm')
+    plt.title("Logistic Regression Coefficients")
+    plt.xlabel("Coefficient Value")
+    plt.ylabel("Feature")
+    plt.axvline(0, color='grey', linestyle='--')
+    plt.tight_layout()
+    plt.show()
+
+# Example usage after retraining your logistic regression:
+
 # --------------------------------------------------------------------------------
 # 7) MAIN PIPELINE
 # --------------------------------------------------------------------------------
@@ -695,6 +743,17 @@ def main():
     retrained_logreg = retrain_model_on_full_data(best_logreg_model, best_logreg_scaler, X, y, method_name='LogReg', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
     retrained_mlp = retrain_model_on_full_data(best_mlp_model, best_mlp_scaler, X, y, method_name='MLP', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
     
+    plot_mlp_weights(retrained_mlp, layer=0)
+    plot_mlp_weights(retrained_mlp, layer=1)
+    plot_mlp_weights(retrained_mlp, layer=2)
+    plot_mlp_weights(retrained_mlp, layer=3)
+    plot_mlp_weights(retrained_mlp, layer=4)
+    plot_mlp_weights(retrained_mlp, layer=5)
+    plot_mlp_weights(retrained_mlp, layer=6)
+    plot_logreg_coefficients(retrained_logreg, feature_names)
+
+    
+    
     # 7) Report Final Accuracy
     # Since we've already printed the accuracy in retrain_model_on_full_data, you can also aggregate it here if needed.
     
@@ -702,3 +761,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
