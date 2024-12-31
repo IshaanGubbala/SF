@@ -1,164 +1,160 @@
-"""
-board_client.py
-
-This script connects to an EEG board (via BrainFlow), collects real-time EEG data, 
-and sends the data to a Flask server for prediction. It also performs simple 
-real-time Matplotlib visualization of the EEG data.
-
-Usage:
-  python board_client.py
-"""
-
-import os
+import asyncio
+import websockets
+import json
 import time
-import requests
-import matplotlib.pyplot as plt
 import numpy as np
-from collections import deque
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
+from pydantic import BaseModel, ValidationError
+from typing import List, Dict, Any
 
-# ------------------------------
-# Configuration
-# ------------------------------
-CHANNELS = ["Fp1", "Fp2", "C3", "C4"]  # The EEG channel labels you want to use
-SAMPLING_RATE = 500                   # Your EEG board's sampling rate (Hz)
-BUFFER_LENGTH = SAMPLING_RATE * 10    # Number of samples you want to store (e.g., 10 seconds)
-ANALYSIS_INTERVAL = 2 * 60            # Perform long-term analysis every 2 minutes
-DATA_INTERVAL = 0.005                 # Sleep time between data grabs (5 ms)
-SERVER_URL = "http://192.168.5.71:5000"  # Flask server URL
-USE_SYNTHETIC_BOARD = True            # If True, use BrainFlow's synthetic board
+# --------------------------------------------------------------------------------
+# Pydantic Models for Sending EEG Data and Receiving Predictions
+# --------------------------------------------------------------------------------
 
-# ------------------------------
-# Visualization Setup
-# ------------------------------
-plt.ion()
-fig, axes = plt.subplots(len(CHANNELS), 1, sharex=True, figsize=(8, 6))
+class EEGSample(BaseModel):
+    channels: List[float]  # List of channel values for a single sample
 
-for i, ch in enumerate(CHANNELS):
-    axes[i].set_xlim(0, BUFFER_LENGTH)
-    axes[i].set_ylim(-1.5, 1.5)
-    axes[i].set_title(ch)
-    axes[i].set_xlabel("Samples")
-    axes[i].set_ylabel("Amplitude")
+class EEGData(BaseModel):
+    data: List[EEGSample]  # List of samples
 
-# Each channel gets a line object
-lines = [axes[i].plot([], [])[0] for i in range(len(CHANNELS))]
+class PredictionResponse(BaseModel):
+    prediction: int
+    confidence: float
+    features: Dict[str, float]
+    stats: Dict[str, Dict[str, float]]
 
-# ------------------------------
-# Data Buffer
-# ------------------------------
-buffer = deque(maxlen=BUFFER_LENGTH)
+# --------------------------------------------------------------------------------
+# Client Configuration
+# --------------------------------------------------------------------------------
 
-def main():
+# WebSocket server URI
+SERVER_URI = "ws://192.168.5.71:8000/ws"  # Adjust if the server is hosted elsewhere
+
+# BrainFlow Configuration
+BOARD_ID = BoardIds.GANGLION_NATIVE_BOARD.value  # Using Synthetic Board for testing
+SERIAL_PORT = ''  # Not required for Synthetic Board
+
+# Data Acquisition Parameters
+SAMPLING_RATE = 256  # Hz
+CHUNK_SIZE = 256  # Number of samples per chunk (1 second)
+DELAY = 1  # Seconds to wait between sending chunks
+
+# --------------------------------------------------------------------------------
+# Client Implementation
+# --------------------------------------------------------------------------------
+
+async def send_eeg_data(uri: str):
     """
-    Main loop for reading data from the EEG board, buffering it, 
-    visualizing it, and sending it to the Flask server for prediction.
+    Connects to the WebSocket server, acquires EEG data using BrainFlow,
+    sends the data to the server, and listens for prediction responses.
     """
-    # ------------------------------
-    # BrainFlow Board Setup
-    # ------------------------------
+    # Initialize BrainFlow
     params = BrainFlowInputParams()
-    # Change this to the actual serial_port or other parameter for your board
-    # Example: params.serial_port = "/dev/ttyUSB0" or "COM3"
-    # If you are using a wifi/shield board or other settings, 
-    # configure BrainFlowInputParams accordingly.
-
-    if USE_SYNTHETIC_BOARD:
-        board_id = BoardIds.SYNTHETIC_BOARD.value
-    else:
-        # Replace with the correct board ID for your hardware
-        board_id = BoardIds.CYTON_BOARD.value
-
-    board = BoardShim(board_id, params)
-
-    # Prepare and start data stream
-    board.prepare_session()
-    board.start_stream()
-    print("Starting real-time EEG streaming...")
-
-    last_analysis_time = time.time()
-
+    params.serial_port = SERIAL_PORT  # Not required for Synthetic Board
+    board = BoardShim(BOARD_ID, params)
+    
     try:
-        while True:
-            # Grab up to SAMPLING_RATE samples from the board
-            data = board.get_current_board_data(SAMPLING_RATE)
-
-            # If no new data, continue
-            if data.shape[1] == 0:
-                continue
-
-            # For demonstration, scale raw data by dividing by 100 
-            # (depends on your board's output amplitude)
-            data[:len(CHANNELS), :] /= 100
-
-            # Select only the relevant EEG channels (in row-major, then transpose)
-            selected_data = data[:len(CHANNELS), :].T  # shape = (samples, channels)
-            buffer.extend(selected_data)
-
-            # ------------------------------
-            # Local Visualization (Optional)
-            # ------------------------------
-            for i, line in enumerate(lines):
-                channel_data = [row[i] for row in buffer]
-                line.set_data(range(len(buffer)), channel_data)
-                axes[i].relim()
-                axes[i].autoscale_view()
-            plt.pause(0.001)
-
-            # ------------------------------
-            # Short-Term Analysis
-            # ------------------------------
-            # Once buffer is full (10 seconds), send that chunk to the server
-            if len(buffer) >= BUFFER_LENGTH:
-                short_term_data = np.array(buffer).T  # shape: (channels, samples)
-
-                # Send data to server via POST request
-                try:
-                    response = requests.post(
-                        f"{SERVER_URL}/predict",
-                        json={"data": short_term_data.tolist()},
-                        timeout=5
-                    )
-                    if response.status_code == 200:
-                        print("Short-term prediction received from server.")
-                        # Optionally parse JSON: response.json() 
-                    else:
-                        print(f"Server error: {response.status_code}, {response.text}")
-                except requests.exceptions.RequestException as e:
-                    print(f"Error posting data to server: {e}")
-
-            # ------------------------------
-            # Long-Term Analysis
-            # ------------------------------
-            # Every ANALYSIS_INTERVAL seconds, send the entire buffer
-            if time.time() - last_analysis_time >= ANALYSIS_INTERVAL:
-                long_term_data = np.array(buffer).T  # shape: (channels, samples)
-
-                try:
-                    response = requests.post(
-                        f"{SERVER_URL}/predict",
-                        json={"data": long_term_data.tolist()},
-                        timeout=5
-                    )
-                    if response.status_code == 200:
-                        print("Long-term prediction received from server.")
-                        # Optionally parse JSON: response.json()
-                    else:
-                        print(f"Server error: {response.status_code}, {response.text}")
-                except requests.exceptions.RequestException as e:
-                    print(f"Error posting data to server: {e}")
-
-                last_analysis_time = time.time()
-
-            time.sleep(DATA_INTERVAL)
-
-    except KeyboardInterrupt:
-        print("Exiting...")
-
+        board.prepare_session()
+        board.start_stream()
+        print("[INFO] BrainFlow session started. Acquiring data...")
+    except Exception as e:
+        print(f"[ERROR] Failed to start BrainFlow session: {e}")
+        return
+    
+    try:
+        async with websockets.connect(uri) as websocket:
+            print(f"[INFO] Connected to server at {uri}")
+            
+            # Listen for prediction responses in the background
+            asyncio.create_task(receive_predictions(websocket))
+            
+            # Continuously acquire and send data
+            while True:
+                # Acquire CHUNK_SIZE samples
+                data = board.get_current_board_data(CHUNK_SIZE)
+                eeg_channels = BoardShim.get_eeg_channels(BOARD_ID)
+                
+                # Validate that EEG channels are available
+                if not eeg_channels:
+                    print("[ERROR] No EEG channels found. Check board configuration.")
+                    await websocket.send(json.dumps({"error": "No EEG channels found."}))
+                    break
+                
+                # Extract EEG data: shape (samples, channels)
+                eeg_data = data[eeg_channels, :].T  # Shape: (samples, channels)
+                
+                # Scale each channel by 1e-9
+                eeg_data_scaled = (eeg_data * 1e-9).tolist()  # Convert to list after scaling
+                
+                # Convert data to list of EEGSample
+                eeg_samples = [EEGSample(channels=sample) for sample in eeg_data_scaled]
+                
+                # Create EEGData message
+                eeg_message = EEGData(data=eeg_samples)
+                
+                # Send data as JSON
+                await websocket.send(eeg_message.json())
+                print(f"[INFO] Sent {CHUNK_SIZE} samples to server.")
+                
+                # Wait before sending the next chunk
+                await asyncio.sleep(DELAY)
+    
+    except websockets.exceptions.ConnectionClosed as e:
+        print(f"[INFO] Connection closed: {e}")
+    except Exception as e:
+        print(f"[ERROR] Unexpected error: {e}")
     finally:
         board.stop_stream()
         board.release_session()
-        print("EEG session closed.")
+        print("[INFO] BrainFlow session stopped.")
+
+async def receive_predictions(websocket: websockets.WebSocketClientProtocol):
+    """
+    Listens for prediction responses from the server and displays them.
+    """
+    try:
+        async for message in websocket:
+            try:
+                response_dict = json.loads(message)
+                
+                if "error" in response_dict:
+                    print(f"\n[SERVER ERROR]: {response_dict['error']}\n")
+                    continue  # Skip processing for this message
+                
+                # Attempt to parse the response into PredictionResponse
+                prediction_response = PredictionResponse(**response_dict)
+                
+                # Display the prediction results
+                display_prediction(prediction_response)
+            except json.JSONDecodeError:
+                print(f"[WARNING] Received non-JSON message: {message}")
+            except ValidationError as ve:
+                print(f"[WARNING] Received message with invalid format: {ve}")
+            except Exception as e:
+                print(f"[ERROR] Failed to process received message: {e}")
+    except websockets.exceptions.ConnectionClosed:
+        print("[INFO] Server closed the connection.")
+    except Exception as e:
+        print(f"[ERROR] Error while receiving predictions: {e}")
+
+def display_prediction(prediction_response: PredictionResponse):
+    """
+    Formats and displays the prediction response.
+    """
+    print("\n=== Prediction Received ===")
+    print(f"Prediction: {'Alzheimer' if prediction_response.prediction == 1 else 'Control'}")
+    print(f"Confidence: {prediction_response.confidence * 100:.2f}%")
+    print("\nFeatures:")
+    for feature, value in prediction_response.features.items():
+        print(f"  {feature}: {value:.9f}")
+    print("===========================\n")
+
+# --------------------------------------------------------------------------------
+# Main Execution
+# --------------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(send_eeg_data(SERVER_URI))
+    except KeyboardInterrupt:
+        print("\n[INFO] Client stopped manually.")
