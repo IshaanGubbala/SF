@@ -304,6 +304,65 @@ def load_dataset_parallel():
 # --------------------------------------------------------------------------------
 # 4) FEATURE STATISTICS AND VISUALIZATION
 # --------------------------------------------------------------------------------
+def visualize_mlp_architecture(model, figsize=(12, 8)):
+    """
+    Visualizes the architecture of an MLPClassifier using networkx.
+
+    Args:
+        model: Trained MLPClassifier model.
+        figsize: Size of the figure.
+    """
+    hidden_layers = model.hidden_layer_sizes
+    layers = [model.n_features_in_] + list(hidden_layers) + [model.n_outputs_]
+    num_layers = len(layers)
+
+    G = nx.DiGraph()
+
+    pos = {}
+    node_size = 300
+    layer_distance = 2
+    neuron_distance = 1
+
+    # Assign positions to nodes
+    for layer_idx, layer_size in enumerate(layers):
+        for neuron_idx in range(layer_size):
+            node = f"L{layer_idx}N{neuron_idx}"
+            G.add_node(node, layer=layer_idx)
+            pos[node] = (layer_idx * layer_distance, neuron_idx * neuron_distance - (layer_size / 2))
+    
+    # Add edges between layers
+    for layer_idx in range(num_layers - 1):
+        for src_neuron in range(layers[layer_idx]):
+            for dst_neuron in range(layers[layer_idx + 1]):
+                src_node = f"L{layer_idx}N{src_neuron}"
+                dst_node = f"L{layer_idx + 1}N{dst_neuron}"
+                G.add_edge(src_node, dst_node, weight=0.05)
+
+    plt.figure(figsize=figsize)
+    layers_dict = nx.get_node_attributes(G, 'layer')
+    colors = [layers_dict[node] for node in G.nodes()]
+    nx.draw_networkx_nodes(G, pos, node_size=node_size, node_color=colors, cmap=plt.cm.viridis)
+    nx.draw_networkx_edges(G, pos, arrows=False, alpha=0.3)
+    plt.title("MLP Architecture Visualization")
+    for layer_idx, layer_size in enumerate(layers):
+        if layer_idx == 0:
+            layer_label = f"Input Layer\n({layer_size} Neurons)"
+        elif layer_idx == num_layers - 1:
+            layer_label = f"Output Layer\n({layer_size} Neurons)"
+        else:
+            layer_label = f"Hidden Layer {layer_idx}\n({layer_size} Neurons)"
+        plt.text(
+            layer_idx * layer_distance,
+            (layer_size * neuron_distance) / 2 + 35,  # Position above the top neuron
+            layer_label,
+            horizontalalignment='center',
+            fontsize=8,
+            fontweight=None,
+            bbox=dict(facecolor='white', edgecolor='none', alpha=0.7)
+        )
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
 
 def analyze_feature_statistics(X, y, feature_names, output_dir=FEATURE_ANALYSIS_DIR):
     """
@@ -392,7 +451,7 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         X_test_scaled = scaler.transform(X_test)
 
         # Define Logistic Regression Classifier
-        clf = LogisticRegression(max_iter=2000, random_state=5)
+        clf = LogisticRegression(max_iter=5000, random_state=5)
         clf.fit(X_train_scaled, y_train)
         y_pred = clf.predict(X_test_scaled)
         y_proba = clf.predict_proba(X_test_scaled)[:, 1]
@@ -465,27 +524,37 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
 # Assuming 'retrained_mlp' is your trained MLP model
 # and you have 'feature_names' and 'class_names' defined.
 
-def plot_mlp_weights(model, layer=0, figsize=(12, 8)):
+def plot_mlp_weights(model, output_dir=PLOTS_DIR):
     """
-    Plots the weight matrix of a specified hidden layer in the MLP.
+    Visualizes the distribution of weights for each hidden layer in the MLPClassifier.
 
     Args:
         model: Trained MLPClassifier model.
-        layer: Index of the hidden layer to visualize (0-based).
-        figsize: Size of the figure.
+        output_dir: Directory to save the weight distribution plots.
     """
-    if layer >= len(model.coefs_) -1:
-        raise ValueError("Layer index out of range.")
+    os.makedirs(output_dir, exist_ok=True)
     
-    weight_matrix = model.coefs_[layer]
-    
-    plt.figure(figsize=figsize)
-    sns.heatmap(weight_matrix, cmap='viridis', center=0)
-    plt.title(f"MLP Weights - Layer {layer +1} (Input to Hidden Layer {layer +1})")
-    plt.xlabel(f"Neurons in Hidden Layer {layer +1}")
-    plt.ylabel(f"Input Features")
-    plt.tight_layout()
-    plt.show()
+    for layer_idx, weight_matrix in enumerate(model.coefs_[:-1]):  # Exclude output layer
+        weights = weight_matrix.flatten()
+        
+        plt.figure(figsize=(14, 6))
+
+        # Histogram
+        plt.subplot(1, 2, 1)
+        sns.histplot(weights, bins=50, kde=True, color='skyblue')
+        plt.title(f"Layer {layer_idx +1} Weights Distribution")
+        plt.xlabel("Weight Value")
+        plt.ylabel("Frequency")
+
+        # Box Plot
+        plt.subplot(1, 2, 2)
+        sns.boxplot(x=weights, color='lightgreen')
+        plt.title(f"Layer {layer_idx +1} Weights Box Plot")
+        plt.xlabel("Weight Value")
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f"mlp_layer_{layer_idx +1}_weights_distribution.png"))
+        plt.close()
 
 
 def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR):
@@ -683,6 +752,80 @@ def retrain_model_on_full_data(model, scaler, X, y, method_name='Method', models
 
     return model
 
+def plot_mlp_feature_importance(model, X, y, feature_names, scaler=None, 
+                                scoring='roc_auc', n_repeats=30, random_state=42,
+                                output_dir='plots', filename='mlp_feature_importance.png'):
+    """
+    Calculates and plots feature importance for an MLPClassifier using permutation importance.
+
+    Args:
+        model: Trained MLPClassifier model.
+        X: Feature matrix (NumPy array or pandas DataFrame).
+        y: Labels (NumPy array or pandas Series).
+        feature_names: List of feature names.
+        scaler: Scaler object used to scale X (e.g., StandardScaler). If provided, X will be transformed before importance calculation.
+        scoring: Scoring metric for permutation importance (default: 'roc_auc').
+        n_repeats: Number of times to permute a feature (default: 30).
+        random_state: Random state for reproducibility (default: 42).
+        output_dir: Directory to save the feature importance plot.
+        filename: Name of the saved PNG file.
+    """
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # If a scaler is provided, transform the data
+    if scaler is not None:
+        X_scaled = scaler.transform(X)
+    else:
+        X_scaled = X.copy()
+    
+    # Calculate permutation importance
+    print("[INFO] Calculating permutation importance...")
+    result = permutation_importance(model, X_scaled, y, scoring=scoring,
+                                    n_repeats=n_repeats, random_state=random_state, n_jobs=-1)
+    
+    # Extract importances
+    importances = result.importances_mean
+    importances_std = result.importances_std
+    
+    # Create a DataFrame for visualization
+    importance_df = np.vstack((importances, importances_std)).T
+    importance_df = importance_df[np.argsort(importances)]
+    sorted_indices = np.argsort(importances)
+    
+    sorted_importances = importances[sorted_indices]
+    sorted_importances_std = importances_std[sorted_indices]
+    sorted_features = [feature_names[i] for i in sorted_indices]
+    
+    # Plotting
+    plt.figure(figsize=(10, max(6, len(feature_names)*0.3)))  # Adjust height based on number of features
+    sns.set_style("whitegrid")
+    ax = sns.barplot(x=sorted_importances, y=sorted_features, palette='viridis', 
+                     edgecolor='black', linewidth=0.8)
+    
+    # Add error bars
+    ax.errorbar(sorted_importances, range(len(sorted_features)), 
+                xerr=sorted_importances_std, fmt='none', c='black', capsize=3)
+    
+    # Add titles and labels
+    plt.title(f'Feature Importance using Permutation Importance ({scoring})', fontsize=16, fontweight='bold')
+    plt.xlabel('Decrease in Model Performance')
+    plt.ylabel('Features')
+    
+    # Annotate bars with importance values
+    for i, (imp, imp_std) in enumerate(zip(sorted_importances, sorted_importances_std)):
+        plt.text(imp + max(sorted_importances)*0.01, i, f"{imp:.4f}", va='center')
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    save_path = os.path.join(output_dir, filename)
+    plt.savefig(save_path, format='png', dpi=300)
+    plt.close()
+    
+    print(f"[INFO] Feature importance plot saved as '{save_path}'.")
+
+
 def plot_logreg_coefficients(model, feature_names):
     """
     Plots the coefficients of a Logistic Regression model.
@@ -743,13 +886,8 @@ def main():
     retrained_logreg = retrain_model_on_full_data(best_logreg_model, best_logreg_scaler, X, y, method_name='LogReg', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
     retrained_mlp = retrain_model_on_full_data(best_mlp_model, best_mlp_scaler, X, y, method_name='MLP', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
     
-    plot_mlp_weights(retrained_mlp, layer=0)
-    plot_mlp_weights(retrained_mlp, layer=1)
-    plot_mlp_weights(retrained_mlp, layer=2)
-    plot_mlp_weights(retrained_mlp, layer=3)
-    plot_mlp_weights(retrained_mlp, layer=4)
-    plot_mlp_weights(retrained_mlp, layer=5)
-    plot_mlp_weights(retrained_mlp, layer=6)
+    #plot_mlp_weights(retrained_mlp)
+    #visualize_mlp_architecture(retrained_mlp)
     plot_logreg_coefficients(retrained_logreg, feature_names)
 
     
