@@ -376,7 +376,7 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
     Saves trained models and ROC curves.
     Returns a list of trained models and their metrics.
     """
-    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=5)
     fold_num = 1
     metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1_score': [], 'roc_auc': []}
     models = []
@@ -392,7 +392,7 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         X_test_scaled = scaler.transform(X_test)
 
         # Define Logistic Regression Classifier
-        clf = LogisticRegression(max_iter=2000, random_state=42)
+        clf = LogisticRegression(max_iter=2000, random_state=5)
         clf.fit(X_train_scaled, y_train)
         y_pred = clf.predict(X_test_scaled)
         y_proba = clf.predict_proba(X_test_scaled)[:, 1]
@@ -494,7 +494,7 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
     Saves trained models and ROC curves.
     Returns a list of trained models and their metrics.
     """
-    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=5)
     fold_num = 1
     metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1_score': [], 'roc_auc': []}
     models = []
@@ -516,7 +516,7 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
             activation='relu',               # Activation function
             solver='adam',                   # Optimization algorithm
             max_iter=3000,                   # Maximum number of iterations
-            random_state=42,                 # For reproducibility
+            random_state=5,                 # For reproducibility
             early_stopping=True,             # Stop early if no improvement
             validation_fraction=0.1,         # Fraction for validation
             n_iter_no_change=15              # Number of epochs with no improvement to wait
