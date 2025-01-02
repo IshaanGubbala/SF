@@ -35,7 +35,7 @@ class EnergyLandscape(BaseModel):
 # Client Configuration
 # --------------------------------------------------------------------------------
 
-SERVER_URI = "ws://192.168.5.71:8000/ws"  # or wherever the server is
+SERVER_URI = "ws://192.168.5.222:8000/ws"  # or wherever the server is
 BOARD_ID = BoardIds.SYNTHETIC_BOARD.value
 SERIAL_PORT = ""
 SAMPLING_RATE = 256
