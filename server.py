@@ -385,4 +385,4 @@ async def websocket_endpoint(websocket: WebSocket):
 # ------------------ MAIN RUN -----------------------------------------------
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("eeg_server_energy_landscape:app", host="0.0.0.0", port=8000, reload=True)

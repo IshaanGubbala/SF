@@ -9,6 +9,7 @@ import seaborn as sns
 import joblib
 import matplotlib.pyplot as plt
 import networkx as nx
+import json
 # Scikit-learn imports
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
@@ -32,7 +33,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 # Statistical testing
 from scipy.stats import ttest_ind
-
+from imblearn.over_sampling import SMOTE
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow warnings if any
@@ -95,7 +96,7 @@ def load_participant_labels(ds004504_participants_file, ds003800_participants_fi
     group_map_ds004504 = {"A": 1, "C": 0}
     
     # Process ds004504 participants.tsv
-    print(f"[DEBUG] Loading participant labels from {ds004504_participants_file}.")
+    #print(f"[DEBUG] Loading participant labels from {ds004504_participants_file}.")
     df_ds004504 = pd.read_csv(ds004504_participants_file, sep="\t")
     if 'Group' not in df_ds004504.columns or 'participant_id' not in df_ds004504.columns:
         raise ValueError("ds004504 participants.tsv must contain 'Group' and 'participant_id' columns.")
@@ -103,19 +104,17 @@ def load_participant_labels(ds004504_participants_file, ds003800_participants_fi
     df_ds004504 = df_ds004504[df_ds004504['Group'].isin(group_map_ds004504.keys())]  # Ensure only A and C groups are present
     labels_ds004504 = df_ds004504.set_index("participant_id")["Group"].map(group_map_ds004504).to_dict()
     label_dict.update(labels_ds004504)
-    print(f"[DEBUG] ds004504: Loaded {len(labels_ds004504)} participant labels.")
+    #print(f"[DEBUG] ds004504: Loaded {len(labels_ds004504)} participant labels.")
     
     # Process ds003800 participants.tsv
-    print(f"[DEBUG] Loading participant labels from {ds003800_participants_file}.")
+    #print(f"[DEBUG] Loading participant labels from {ds003800_participants_file}.")
     df_ds003800 = pd.read_csv(ds003800_participants_file, sep="\t")
     if 'Group' not in df_ds003800.columns or 'participant_id' not in df_ds003800.columns:
         raise ValueError("ds003800 participants.tsv must contain 'Group' and 'participant_id' columns.")
     # Assign label 1 to all participants in ds003800
     labels_ds003800 = df_ds003800.set_index("participant_id")["Group"].apply(lambda x: 1).to_dict()
     label_dict.update(labels_ds003800)
-    print(f"[DEBUG] ds003800: Loaded {len(labels_ds003800)} participant labels (all labeled as 1).")
-    
-    print(f"[DEBUG] Total participants after combining datasets: {len(label_dict)}")
+    #print(f"[DEBUG] Total participants after combining datasets: {len(label_dict)}")
     return label_dict
 
 # Load participant labels from both datasets
@@ -234,7 +233,7 @@ def process_subject(args):
     """
     file, label = args
     try:
-        print(f"[DEBUG] Processing file: {file}")
+        #print(f"[DEBUG] Processing file: {file}")
         raw = mne.io.read_raw_eeglab(file, preload=True, verbose=False)
         raw.filter(1.0, 50.0, fir_design="firwin", verbose=False)
         raw.resample(SAMPLING_RATE, npad="auto")
@@ -281,10 +280,8 @@ def load_dataset_parallel():
         label = participant_labels.get(participant_id, None)  # Get label; set to None if not found
         if label is not None:
             tasks.append((f, label))
-        else:
-            print(f"[WARNING] Label not found for participant {participant_id}. Skipping file {f}.")
-    
-    print(f"[DEBUG] Found {len(tasks)} EEG files to process from all datasets.")
+        
+    #print(f"[DEBUG] Found {len(tasks)} EEG files to process from all datasets.")
     features_list = []
     labels_list = []
     
@@ -431,14 +428,15 @@ def analyze_feature_statistics(X, y, feature_names, output_dir=FEATURE_ANALYSIS_
 
 def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR):
     """
-    Logistic Regression baseline with StratifiedKFold cross-validation.
+    Logistic Regression baseline with StratifiedKFold cross-validation and SMOTE.
     Saves trained models and ROC curves.
     Returns a list of trained models and their metrics.
     """
-    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=5)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
     fold_num = 1
     metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1_score': [], 'roc_auc': []}
     models = []
+    smote = SMOTE(random_state=5)
     
     for train_idx, test_idx in skf.split(X, y):
         print(f"\n[LogReg] Fold {fold_num} - Training")
@@ -450,9 +448,13 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
 
+        # Apply SMOTE to the training data
+        X_train_resampled, y_train_resampled = smote.fit_resample(X_train_scaled, y_train)
+        print(f"[LogReg] Fold {fold_num} - After SMOTE: {np.bincount(y_train_resampled)}")
+
         # Define Logistic Regression Classifier
         clf = LogisticRegression(max_iter=5000, random_state=5)
-        clf.fit(X_train_scaled, y_train)
+        clf.fit(X_train_resampled, y_train_resampled)
         y_pred = clf.predict(X_test_scaled)
         y_proba = clf.predict_proba(X_test_scaled)[:, 1]
 
@@ -469,7 +471,7 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         metrics['f1_score'].append(f1)
         metrics['roc_auc'].append(roc_auc)
 
-        # Print Classaification Report
+        # Print Classification Report
         print(f"\n[LogReg] Fold {fold_num} Classification Report:")
         print(classification_report(y_test, y_pred, target_names=['Control', 'Alzheimer']))
 
@@ -520,7 +522,6 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
         print(f"{metric.capitalize()}: {avg:.4f} ± {std:.4f}")
     
     return models, metrics
-
 # Assuming 'retrained_mlp' is your trained MLP model
 # and you have 'feature_names' and 'class_names' defined.
 
@@ -557,16 +558,18 @@ def plot_mlp_weights(model, output_dir=PLOTS_DIR):
         plt.close()
 
 
+
 def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR):
     """
-    MLP Classifier baseline with StratifiedKFold cross-validation.
+    MLP Classifier baseline with StratifiedKFold cross-validation and SMOTE.
     Saves trained models and ROC curves.
     Returns a list of trained models and their metrics.
     """
-    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=5)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
     fold_num = 1
     metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1_score': [], 'roc_auc': []}
     models = []
+    smote = SMOTE(random_state=5)
     
     for train_idx, test_idx in skf.split(X, y):
         print(f"\n[MLP] Fold {fold_num} - Training")
@@ -577,20 +580,24 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
-        
+
+        # Apply SMOTE to the training data
+        X_train_resampled, y_train_resampled = smote.fit_resample(X_train_scaled, y_train)
+        print(f"[MLP] Fold {fold_num} - After SMOTE: {np.bincount(y_train_resampled)}")
 
         # Define MLP Classifier
         clf = MLPClassifier(
-            hidden_layer_sizes=(1024, 512,256,128, 60, 76, 16,),   # Two hidden layers with 64 and 16 neurons respectively
-            activation='relu',               # Activation function
-            solver='adam',                   # Optimization algorithm
-            max_iter=3000,                   # Maximum number of iterations
-            random_state=5,                 # For reproducibility
-            early_stopping=True,             # Stop early if no improvement
-            validation_fraction=0.1,         # Fraction for validation
-            n_iter_no_change=15              # Number of epochs with no improvement to wait
+            hidden_layer_sizes=(256, 64, 12),
+            activation='relu',
+            solver='adam',
+            max_iter=3000,
+            random_state=5,
+            early_stopping=True,
+            validation_fraction=0.1,
+            n_iter_no_change=15,
+            alpha=0.1
         )
-        clf.fit(X_train_scaled, y_train)
+        clf.fit(X_train_resampled, y_train_resampled)
         y_pred = clf.predict(X_test_scaled)
         y_proba = clf.predict_proba(X_test_scaled)[:, 1]
 
@@ -679,38 +686,28 @@ def select_best_model(models, method_name='Method'):
     print(f"\n[{method_name}] Best Model: Fold {best['fold']} with ROC AUC = {best['roc_auc']:.4f}")
     return best['model'], best['scaler']
 
-def retrain_model_on_full_data(model, scaler, X, y, method_name='Method', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR):
+def evaluate_model_on_full_data(model, scaler, X, y, method_name='Method', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR):
     """
-    Retrains the given model on the entire dataset and evaluates its performance.
-    
+    Evaluates the given model on the entire dataset without retraining.
+
     Args:
-        model: The machine learning model to retrain.
+        model: The trained machine learning model to evaluate.
         scaler: The scaler associated with the model.
         X: Feature matrix.
         y: Labels.
-        method_name: Name of the method for logging.
-        models_dir: Directory to save the retrained model.
+        method_name: Name of the method (e.g., 'LogReg', 'MLP') for logging.
+        models_dir: Directory to save the evaluation artifacts.
         plots_dir: Directory to save evaluation plots.
-    
+
     Returns:
-        retrained_model: The model retrained on the entire dataset.
+        model: The evaluated model.
     """
-    print(f"\n[{method_name}] Retraining on the entire dataset.")
+    print(f"\n[{method_name}] Evaluating on the entire dataset.")
 
     # Feature Scaling
-    X_scaled = scaler.fit_transform(X)
-    
-    # Retrain the model
-    model.fit(X_scaled, y)
+    X_scaled = scaler.transform(X)
 
-    # Save the retrained model and scaler
-    retrained_model_filename = os.path.join(models_dir, f"{method_name.lower()}_retrained.joblib")
-    retrained_scaler_filename = os.path.join(models_dir, f"{method_name.lower()}_retrained_scaler.joblib")
-    joblib.dump(model, retrained_model_filename)
-    joblib.dump(scaler, retrained_scaler_filename)
-    print(f"[{method_name}] Retrained model and scaler saved.")
-
-    # Predict on the entire dataset
+    # Predict using the trained model
     y_pred = model.predict(X_scaled)
     y_proba = model.predict_proba(X_scaled)[:, 1]
 
@@ -731,26 +728,44 @@ def retrain_model_on_full_data(model, scaler, X, y, method_name='Method', models
     # Plot ROC Curve
     fpr, tpr, _ = roc_curve(y, y_proba)
     plt.figure()
-    plt.plot(fpr, tpr, label=f'{method_name} Retrained (AUC = {roc_auc:.2f})')
+    plt.plot(fpr, tpr, label=f'{method_name} (AUC = {roc_auc:.2f})')
     plt.plot([0, 1], [0, 1], 'k--')  # Diagonal line
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title(f'{method_name} ROC Curve - Retrained on Entire Dataset')
+    plt.title(f'{method_name} ROC Curve - Entire Dataset')
     plt.legend(loc='lower right')
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_dir, f"{method_name.lower()}_retrained_roc_curve.png"))
+    roc_curve_path = os.path.join(plots_dir, f"{method_name.lower()}_entire_dataset_roc_curve.png")
+    plt.savefig(roc_curve_path)
     plt.close()
+    print(f"[{method_name}] ROC curve saved to {roc_curve_path}.")
 
     # Plot Confusion Matrix
     cm = confusion_matrix(y, y_pred)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Control', 'Alzheimer'])
     disp.plot(cmap='Oranges')
-    plt.title(f"{method_name} Confusion Matrix - Retrained on Entire Dataset")
+    plt.title(f"{method_name} Confusion Matrix - Entire Dataset")
     plt.tight_layout()
-    plt.savefig(os.path.join(plots_dir, f"{method_name.lower()}_retrained_confusion_matrix.png"))
+    cm_path = os.path.join(plots_dir, f"{method_name.lower()}_entire_dataset_confusion_matrix.png")
+    plt.savefig(cm_path)
     plt.close()
+    print(f"[{method_name}] Confusion matrix saved to {cm_path}.")
+
+    # Save Evaluation Metrics
+    metrics = {
+        'Accuracy': acc,
+        'Precision': prec,
+        'Recall': rec,
+        'F1_Score': f1,
+        'ROC_AUC': roc_auc
+    }
+    metrics_filename = os.path.join(models_dir, f"{method_name.lower()}_evaluation_metrics.json")
+    with open(metrics_filename, 'w') as f:
+        json.dump(metrics, f, indent=4)
+    print(f"[{method_name}] Evaluation metrics saved to {metrics_filename}.")
 
     return model
+
 
 def plot_mlp_feature_importance(model, X, y, feature_names, scaler=None, 
                                 scoring='roc_auc', n_repeats=30, random_state=42,
@@ -825,7 +840,6 @@ def plot_mlp_feature_importance(model, X, y, feature_names, scaler=None,
     
     print(f"[INFO] Feature importance plot saved as '{save_path}'.")
 
-
 def plot_logreg_coefficients(model, feature_names):
     """
     Plots the coefficients of a Logistic Regression model.
@@ -834,7 +848,16 @@ def plot_logreg_coefficients(model, feature_names):
         model: Trained LogisticRegression model.
         feature_names: List of feature names.
     """
-    coefficients = model.coef_[0]
+    if model is None:
+        print("[ERROR] The provided Logistic Regression model is None.")
+        return
+
+    try:
+        coefficients = model.coef_[0]
+    except AttributeError:
+        print("[ERROR] The provided model does not have 'coef_' attribute.")
+        return
+
     plt.figure(figsize=(10, 6))
     sns.barplot(x=coefficients, y=feature_names, palette='coolwarm')
     plt.title("Logistic Regression Coefficients")
@@ -842,7 +865,10 @@ def plot_logreg_coefficients(model, feature_names):
     plt.ylabel("Feature")
     plt.axvline(0, color='grey', linestyle='--')
     plt.tight_layout()
-    plt.show()
+    coef_plot_path = os.path.join(PLOTS_DIR, "logreg_coefficients.png")
+    plt.savefig(coef_plot_path)
+    plt.close()
+    print(f"[INFO] Logistic Regression coefficients plot saved to {coef_plot_path}.")
 
 # Example usage after retraining your logistic regression:
 
@@ -882,20 +908,34 @@ def main():
     best_logreg_model, best_logreg_scaler = select_best_model(logreg_models, method_name='LogReg')
     best_mlp_model, best_mlp_scaler = select_best_model(mlp_models, method_name='MLP')
     
-    # 6) Retrain Best Models on Entire Dataset
-    retrained_logreg = retrain_model_on_full_data(best_logreg_model, best_logreg_scaler, X, y, method_name='LogReg', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
-    retrained_mlp = retrain_model_on_full_data(best_mlp_model, best_mlp_scaler, X, y, method_name='MLP', models_dir=MODELS_DIR, plots_dir=PLOTS_DIR)
+    # 6) Evaluate Best Models on Entire Dataset
+    evaluated_logreg = evaluate_model_on_full_data(
+        best_logreg_model, 
+        best_logreg_scaler, 
+        X, 
+        y, 
+        method_name='LogReg', 
+        models_dir=MODELS_DIR, 
+        plots_dir=PLOTS_DIR
+    )
+    evaluated_mlp = evaluate_model_on_full_data(
+        best_mlp_model, 
+        best_mlp_scaler, 
+        X, 
+        y, 
+        method_name='MLP', 
+        models_dir=MODELS_DIR, 
+        plots_dir=PLOTS_DIR
+    )
     
-    #plot_mlp_weights(retrained_mlp)
-    #visualize_mlp_architecture(retrained_mlp)
-    plot_logreg_coefficients(retrained_logreg, feature_names)
+    # Plot Logistic Regression Coefficients
+    plot_logreg_coefficients(evaluated_logreg, feature_names)
 
+    # Optionally, plot MLP weights or other analyses
+    # plot_mlp_weights(evaluated_mlp)
+    # visualize_mlp_architecture(evaluated_mlp)
     
-    
-    # 7) Report Final Accuracy
-    # Since we've already printed the accuracy in retrain_model_on_full_data, you can also aggregate it here if needed.
-    
-    print("\n[INFO] Best models have been retrained on the entire dataset and their accuracies have been reported.")
+    print("\n[INFO] Best models have been evaluated on the entire dataset and their accuracies have been reported.")
 
 if __name__ == "__main__":
     main()
