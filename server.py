@@ -52,8 +52,8 @@ FEATURE_NAMES = list(FREQUENCY_BANDS.keys()) + [
 
 # Paths
 MODELS_DIR = "trained_models"
-MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_retrained.joblib")
-MLP_SCALER_PATH = os.path.join(MODELS_DIR, "mlp_retrained_scaler.joblib")
+MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_fold_4.joblib")
+MLP_SCALER_PATH = os.path.join(MODELS_DIR, "mlp_scaler_fold_4.joblib")
 PCA_MODEL_PATH = os.path.join(MODELS_DIR, "pca_model.joblib")
 
 # EEG streaming config
@@ -385,4 +385,4 @@ async def websocket_endpoint(websocket: WebSocket):
 # ------------------ MAIN RUN -----------------------------------------------
 
 if __name__ == "__main__":
-    uvicorn.run("eeg_server_energy_landscape:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)

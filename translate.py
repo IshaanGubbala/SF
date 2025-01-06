@@ -5,7 +5,7 @@ predict_eeg_mlp.py
 
 Usage example:
     python translate.py \
-        --input_csv control_features_average.csv \
+        --input_csv extracted_features.csv \
         --model_dir trained_models \
         --output_csv average_predictions.csv
 """
@@ -54,8 +54,8 @@ def main():
     output_csv = args.output_csv
 
     # ------------------ Load the MLP model and scaler ------------------------
-    mlp_model_path = os.path.join(model_dir, "mlp_retrained.joblib")
-    mlp_scaler_path = os.path.join(model_dir, "mlp_retrained_scaler.joblib")
+    mlp_model_path = os.path.join(model_dir, "mlp_fold_4.joblib")
+    mlp_scaler_path = os.path.join(model_dir, "mlp_scaler_fold_4.joblib")
 
     if not os.path.exists(mlp_model_path):
         raise FileNotFoundError(f"Could not find MLP model file: {mlp_model_path}")

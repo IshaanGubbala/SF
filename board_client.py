@@ -129,8 +129,8 @@ def update_plots():
 # Client Configuration
 # --------------------------------------------------------------------------------
 
-SERVER_URI = "ws://192.168.5.71:8000/ws"  # Adjust to your server IP/port
-BOARD_ID = BoardIds.GANGLION_NATIVE_BOARD.value  # Synthetic board for demonstration
+SERVER_URI = "ws://192.168.5.237:8000/ws"  # Adjust to your server IP/port
+BOARD_ID = BoardIds.SYNTHETIC_BOARD.value  # Synthetic board for demonstration
 SERIAL_PORT = ""
 
 SAMPLING_RATE = 256
@@ -192,7 +192,7 @@ def display_prediction(resp: PredictionResponse):
     """
     clear_console()
     pred_label = "Alzheimer" if resp.prediction == 1 else "Control"
-    conf_str = f"{resp.confidence * 100:.2f}"
+    conf_str = f"{resp.confidence * 100:.2f}%"
 
     # Basic table of classification
     table_data = [
@@ -272,7 +272,7 @@ async def send_eeg_data(uri: str):
                 # Assume the first 4 channels map to Fp1, Fp2, C3, C4
                 # Reshape => (CHUNK_SIZE, num_eeg_channels)
                 chunk_eeg = data_chunk[eeg_channels, :].T  # shape: (256, n_eeg_channels)
-                chunk_eeg_scaled = (chunk_eeg * 1e-7)  # convert to Volts (example)
+                chunk_eeg_scaled = (chunk_eeg * 1e-3)  # convert to Volts (example)
 
                 # Update our local plot buffer for the first 4 channels
                 # Ensure we only keep the shape: (4, X)

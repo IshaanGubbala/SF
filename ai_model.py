@@ -15,6 +15,7 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import (
     classification_report,
     accuracy_score,
@@ -432,7 +433,7 @@ def baseline_logistic_regression(X, y, feature_names, models_dir=MODELS_DIR, plo
     Saves trained models and ROC curves.
     Returns a list of trained models and their metrics.
     """
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
+    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=5)
     fold_num = 1
     metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1_score': [], 'roc_auc': []}
     models = []
@@ -565,7 +566,7 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
     Saves trained models and ROC curves.
     Returns a list of trained models and their metrics.
     """
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
+    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=5)
     fold_num = 1
     metrics = {'accuracy': [], 'precision': [], 'recall': [], 'f1_score': [], 'roc_auc': []}
     models = []
@@ -587,15 +588,15 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
 
         # Define MLP Classifier
         clf = MLPClassifier(
-            hidden_layer_sizes=(256, 64, 12),
-            activation='relu',
-            solver='adam',
-            max_iter=3000,
+            hidden_layer_sizes=(16, 2,),
+            activation='logistic',
+            solver='lbfgs',
+            max_iter=2000,
             random_state=5,
             early_stopping=True,
-            validation_fraction=0.1,
-            n_iter_no_change=15,
-            alpha=0.1
+            validation_fraction=0.15,
+            n_iter_no_change=5,
+            alpha=0.375,
         )
         clf.fit(X_train_resampled, y_train_resampled)
         y_pred = clf.predict(X_test_scaled)
@@ -894,8 +895,8 @@ def main():
     stats_df = analyze_feature_statistics(X, y, feature_names, output_dir=FEATURE_ANALYSIS_DIR)
     
     # Optional: Display top 5 statistically significant features
-    print("\nTop 5 Statistically Significant Features (by P-Value):")
-    print(stats_df.sort_values(by="P-Value").head(5))
+    print("\nTop 10 Statistically Significant Features (by P-Value):")
+    print(stats_df.sort_values(by="P-Value").head(10))
     
     # 4) Baseline Models
     print("\n--- Baseline Logistic Regression ---")
@@ -930,12 +931,13 @@ def main():
     
     # Plot Logistic Regression Coefficients
     plot_logreg_coefficients(evaluated_logreg, feature_names)
-
+    plot_mlp_feature_importance(best_mlp_model, X, y, feature_names, best_mlp_scaler)
     # Optionally, plot MLP weights or other analyses
     # plot_mlp_weights(evaluated_mlp)
     # visualize_mlp_architecture(evaluated_mlp)
     
     print("\n[INFO] Best models have been evaluated on the entire dataset and their accuracies have been reported.")
+    
 
 if __name__ == "__main__":
     main()
