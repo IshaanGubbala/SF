@@ -354,7 +354,7 @@ def positional_encoding(inputs, maxlen=5000, embed_dim=64):
     pos_encoding = angle_rads[np.newaxis, ...]
     return tf.cast(pos_encoding, dtype=tf.float32)
 
-def build_transformer_model(input_shape, d_model=32, num_heads=2, ff_dim=64, num_layers=1, dropout=0.3):
+def build_transformer_model(input_shape, d_model=32, num_heads=2, ff_dim=64, num_layers=2, dropout=0.45):
     """
     Builds a sophisticated Transformer-based model for binary classification.
 
@@ -625,7 +625,7 @@ def baseline_mlp(X, y, feature_names, models_dir=MODELS_DIR, plots_dir=PLOTS_DIR
             model__input_dim=X_train_resampled.shape[1],
             model__hidden_layer_sizes=(20, 12),
             model__activation='relu',
-            model__alpha=0.0025,
+            model__alpha=0.005,
             model__dropout=0.3,
             compile__loss='binary_crossentropy',
             compile__optimizer=Adam(learning_rate=1e-4),
