@@ -354,7 +354,7 @@ def positional_encoding(inputs, maxlen=5000, embed_dim=64):
     pos_encoding = angle_rads[np.newaxis, ...]
     return tf.cast(pos_encoding, dtype=tf.float32)
 
-def build_transformer_model(input_shape, d_model=32, num_heads=2, ff_dim=64, num_layers=1, dropout=0.15):
+def build_transformer_model(input_shape, d_model=32, num_heads=2, ff_dim=64, num_layers=1, dropout=0.3):
     """
     Builds a sophisticated Transformer-based model for binary classification.
 
