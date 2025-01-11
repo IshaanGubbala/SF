@@ -10,6 +10,7 @@ import json
 import joblib
 import tensorflow as tf
 from scikeras.wrappers import KerasClassifier
+from tensorflow.keras.utils import register_keras_serializable
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import (
     GRU, Dense, Dropout, Input, LayerNormalization,
@@ -306,6 +307,7 @@ def load_dataset_parallel():
 # --------------------------------------------------------------------------------
 # 4) TRANSFORMER MODEL DEFINITION
 # --------------------------------------------------------------------------------
+#@register_keras_serializable
 class PositionalEncoding(Layer):
     def __init__(self, maxlen, d_model):
         """
@@ -468,6 +470,7 @@ def print_transformer_training_stats(history, plots_dir):
 # --------------------------------------------------------------------------------
 # 5) BASELINE MODELS USING KERAS AND SKLEARN
 # --------------------------------------------------------------------------------
+
 
 def build_mlp_model(input_dim, hidden_layer_sizes=(20, 12), activation='relu', alpha=0.001, dropout=0.3):
     """

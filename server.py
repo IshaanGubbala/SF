@@ -1,14 +1,15 @@
 """
-eeg_server_energy_landscape.py
+server.py
 
 Run the server with:
-  uvicorn eeg_server_energy_landscape:app --host 0.0.0.0 --port 8000
+  uvicorn server:app --host 0.0.0.0 --port 8000
 """
 
 import os
 import numpy as np
 import mne
 import joblib
+import tensorflow as tf
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel, ValidationError
 from typing import List, Dict, Any
@@ -23,6 +24,10 @@ from scipy.interpolate import griddata
 
 # For CORS
 from fastapi.middleware.cors import CORSMiddleware
+
+# For registering custom Keras layers
+from tensorflow.keras.utils import register_keras_serializable
+from tensorflow.keras.layers import Layer
 
 # ------------------ CONFIGURATION -------------------------------------------
 
@@ -42,19 +47,20 @@ FREQUENCY_BANDS = {
     "Gamma2": (40, 50),
 }
 
-# Feature Names (unchanged)
+# Updated Feature Names (Removed 'Spatial_Complexity' and added 'Transformer_Output')
 FEATURE_NAMES = list(FREQUENCY_BANDS.keys()) + [
     "Alpha_Ratio", "Theta_Ratio",
     "Shannon_Entropy",
     "Hjorth_Activity", "Hjorth_Mobility", "Hjorth_Complexity",
-    "Spatial_Complexity"
+    "Transformer_Output"
 ]
 
 # Paths
 MODELS_DIR = "trained_models"
-MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_fold_4.joblib")
-MLP_SCALER_PATH = os.path.join(MODELS_DIR, "mlp_scaler_fold_4.joblib")
+MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_fold_3.keras")  # Updated to .keras
+MLP_SCALER_PATH = os.path.join(MODELS_DIR, "mlp_scaler_fold_3.joblib")
 PCA_MODEL_PATH = os.path.join(MODELS_DIR, "pca_model.joblib")
+TRANSFORMER_MODEL_PATH = os.path.join(MODELS_DIR, "transformer_model.keras")  # Transformer model path
 
 # EEG streaming config
 SAMPLING_RATE = 256
@@ -64,6 +70,42 @@ WINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE
 # Energy landscape config
 GRID_RESOLUTION = 50
 ENERGY_RANGE = 1.0
+
+# ------------------ CUSTOM LAYER DEFINITION ----------------------------------
+
+@register_keras_serializable()
+class PositionalEncoding(Layer):
+    def __init__(self, maxlen, d_model):
+        """
+        Positional Encoding Layer
+        Args:
+            maxlen: Maximum sequence length.
+            d_model: Dimensionality of embeddings.
+        """
+        super(PositionalEncoding, self).__init__()
+        self.pos_encoding = self.positional_encoding(maxlen, d_model)
+
+    def get_angles(self, position, i, d_model):
+        """Generate angles for the positional encoding formula."""
+        angles = 1 / np.power(10000, (2 * (i // 2)) / np.float32(d_model))
+        return position * angles
+
+    def positional_encoding(self, maxlen, d_model):
+        """Create positional encoding for sequences."""
+        position = np.arange(maxlen)[:, np.newaxis]
+        i = np.arange(d_model)[np.newaxis, :]
+        angle_rads = self.get_angles(position, i, d_model)
+
+        # Apply sin to even indices, cos to odd indices
+        angle_rads[:, 0::2] = np.sin(angle_rads[:, 0::2])
+        angle_rads[:, 1::2] = np.cos(angle_rads[:, 1::2])
+
+        pos_encoding = angle_rads[np.newaxis, ...]
+        return tf.cast(pos_encoding, dtype=tf.float32)
+
+    def call(self, inputs):
+        """Add positional encoding to inputs."""
+        return inputs + self.pos_encoding[:, :tf.shape(inputs)[1], :]
 
 # ------------------ FEATURE EXTRACTION --------------------------------------
 
@@ -107,15 +149,14 @@ def extract_features(data: np.ndarray) -> Dict[str, Any]:
     shannon_entropy = compute_shannon_entropy(data)
     hjorth_params = compute_hjorth_parameters(data)
     
-    # If you compute spatial_complexity somewhere, put code here. Otherwise, 0.0 for placeholder
-    spatial_complexity = 0.0
-    
     features = {band: band_powers.get(band, 0.0) for band in FREQUENCY_BANDS.keys()}
     features["Alpha_Ratio"] = alpha_ratio
     features["Theta_Ratio"] = theta_ratio
     features["Shannon_Entropy"] = shannon_entropy
     features.update(hjorth_params)
-    features["Spatial_Complexity"] = spatial_complexity
+    
+    # 'Spatial_Complexity' has been removed
+    # features["Spatial_Complexity"] = 0.0  # Removed
     
     return features
 
@@ -216,13 +257,29 @@ app.add_middleware(
 
 # ------------------ LOAD MODELS ON STARTUP ----------------------------------
 try:
-    mlp_model = joblib.load(MLP_MODEL_PATH)
-    mlp_scaler = joblib.load(MLP_SCALER_PATH)
-    print("[INFO] MLP model and scaler loaded.")
+    mlp_model = tf.keras.models.load_model(MLP_MODEL_PATH)
+    print("[INFO] MLP model loaded successfully.")
 except Exception as e:
     mlp_model = None
+    print(f"[ERROR] Failed to load MLP model: {e}")
+
+try:
+    mlp_scaler = joblib.load(MLP_SCALER_PATH)
+    print("[INFO] MLP scaler loaded successfully.")
+except Exception as e:
     mlp_scaler = None
-    print(f"[ERROR] Failed to load MLP model/scaler: {e}")
+    print(f"[ERROR] Failed to load MLP scaler: {e}")
+
+# Load the Transformer model
+try:
+    transformer_model = tf.keras.models.load_model(TRANSFORMER_MODEL_PATH)
+    print("[INFO] Transformer model loaded successfully.")
+except Exception as e:
+    transformer_model = None
+    print(f"[ERROR] Failed to load Transformer model: {e}")
+
+# Initialize a lock for Transformer model to handle concurrent access
+transformer_lock = asyncio.Lock()
 
 # For PCA, we simulate or load training features to either load or fit PCA
 def load_training_features() -> np.ndarray:
@@ -310,15 +367,39 @@ class ConnectionManager:
             
             # Extract features
             feats = extract_features(window_data)
-            feat_vec = np.array([feats[f] for f in FEATURE_NAMES]).reshape(1, -1)
+            
+            # Process through Transformer model to get Transformer_Output
+            if transformer_model is not None:
+                try:
+                    # Reshape window_data for Transformer (1, n_times, n_channels)
+                    window_data_trans = window_data[np.newaxis, :, :]
+                    
+                    # Acquire lock before using the Transformer model
+                    async with transformer_lock:
+                        transformer_output = transformer_model.predict(window_data_trans, verbose=0).ravel()[0]
+                    
+                    feats["Transformer_Output"] = float(transformer_output)
+                except Exception as e:
+                    print(f"[ERROR] Failed to get Transformer output: {e}")
+                    feats["Transformer_Output"] = 0.0
+            else:
+                print("[WARNING] Transformer model is not loaded. Using default Transformer_Output=0.0")
+                feats["Transformer_Output"] = 0.0
+            
+            # Convert features to a feature vector in the correct order
+            feat_vec = np.array([feats.get(f, 0.0) for f in FEATURE_NAMES]).reshape(1, -1)
             
             # Scale features, then predict using MLP
             if mlp_model is not None and mlp_scaler is not None:
-                scaled_vec = mlp_scaler.transform(feat_vec)
-                
-                prediction = mlp_model.predict(scaled_vec)[0]
-                # If binary classification, confidence is probability of class=1
-                confidence = mlp_model.predict_proba(scaled_vec)[0][1]
+                try:
+                    scaled_vec = mlp_scaler.transform(feat_vec)
+                    
+                    confidence = mlp_model.predict(scaled_vec)[0][0]  # Assuming sigmoid activation
+                    prediction = int(confidence >= 0.5)
+                except Exception as e:
+                    print(f"[ERROR] Prediction failed: {e}")
+                    prediction = 0
+                    confidence = 0.0
             else:
                 # If we failed to load the MLP, no predictions can be made
                 prediction = 0
@@ -331,8 +412,12 @@ class ConnectionManager:
             e_val = compute_energy(feats, weights)
             
             # Project to PCA space
-            pc = pca.transform(feat_vec)[0]
-            pc1, pc2 = float(pc[0]), float(pc[1])
+            try:
+                pc = pca.transform(feat_vec)[0]
+                pc1, pc2 = float(pc[0]), float(pc[1])
+            except Exception as e:
+                print(f"[ERROR] PCA transformation failed: {e}")
+                pc1, pc2 = 0.0, 0.0
             
             # Create the response
             response = PredictionResponse(

@@ -28,6 +28,9 @@ class PredictionResponse(BaseModel):
     confidence: float
     features: Dict[str, float]
     stats: Dict[str, Dict[str, float]]
+    pc1: float
+    pc2: float
+    energy: float
 
 # --------------------------------------------------------------------------------
 # Example: Real-Time Plot Setup (Matplotlib)
@@ -44,7 +47,7 @@ EEG_POSITIONS = {
 
 # Initialize Matplotlib in interactive mode
 plt.ion()
-fig, (ax_time, ax_head) = plt.subplots(1, 2, figsize=(10, 5))
+fig, (ax_time, ax_head) = plt.subplots(1, 2, figsize=(12, 6))
 fig.suptitle("Real-Time EEG Visualization")
 
 # Buffers to hold time-series data for each of the 4 channels
@@ -64,6 +67,11 @@ CHANNEL_MAP = {
 # We will store the "alpha_ratio" from the last prediction
 last_alpha_ratio = 0.0
 
+# Initialize variables to store pc1, pc2, and energy
+last_pc1 = 0.0
+last_pc2 = 0.0
+last_energy = 0.0
+
 # Create line objects for each channel in ax_time
 lines = []
 colors = ["blue", "red", "green", "purple"]
@@ -74,7 +82,7 @@ ax_time.set_xlim(0, MAX_PLOT_SAMPLES)
 ax_time.set_ylim(-100e-6, 100e-6)  # Adjust y-limits based on your amplitude
 ax_time.set_xlabel("Samples (rolling window)")
 ax_time.set_ylabel("Amplitude (Volts)")
-ax_time.legend()
+ax_time.legend(loc='upper right')
 ax_time.grid(True)
 
 # For the head map, we'll plot 4 scatter points for electrodes
@@ -87,7 +95,7 @@ head_scatter = ax_head.scatter(
 ax_head.set_xlim(-1.2, 1.2)
 ax_head.set_ylim(-1.2, 1.5)
 ax_head.set_aspect("equal", "box")
-ax_head.set_title("Head Map (alpha_ratio color)")
+ax_head.set_title("Head Map (Alpha Ratio Color)")
 ax_head.axis("off")
 
 # A helper list for updating the scatter points in real-time
@@ -97,14 +105,14 @@ def update_plots():
     """
     Update the time-series plot (4 channels) and the head map (color).
     """
-    global channel_data, last_alpha_ratio
+    global channel_data, last_alpha_ratio, last_pc1, last_pc2, last_energy
 
     # 1) Update the time-series plot
     # Each channel_data[i,:] is a 1D array of amplitude over time
     num_points = channel_data.shape[1]
     # We want x-values from 0..num_points
     x_vals = np.arange(num_points)
-
+    
     for i in range(4):
         if i < channel_data.shape[0]:
             y_vals = channel_data[i, :]
@@ -121,6 +129,13 @@ def update_plots():
     colors = [color_rgba]*4
     head_scatter.set_color(colors)
 
+    # 3) Optionally, display pc1, pc2, and energy as text
+    ax_head.text(0.5, -1.0, f"PC1: {last_pc1:.2f}\nPC2: {last_pc2:.2f}\nEnergy: {last_energy:.2f}",
+                horizontalalignment='center',
+                verticalalignment='center',
+                transform=ax_head.transAxes,
+                bbox=dict(facecolor='white', alpha=0.6, edgecolor='black'))
+
     # Redraw
     fig.canvas.draw()
     plt.pause(0.001)  # brief pause to update the figure
@@ -129,7 +144,7 @@ def update_plots():
 # Client Configuration
 # --------------------------------------------------------------------------------
 
-SERVER_URI = "ws://192.168.5.237:8000/ws"  # Adjust to your server IP/port
+SERVER_URI = "ws://10.148.82.49:8000/ws"  # Adjust to your server IP/port
 BOARD_ID = BoardIds.SYNTHETIC_BOARD.value  # Synthetic board for demonstration
 SERIAL_PORT = ""
 
@@ -149,7 +164,7 @@ ENV_NOISE_TYPE = NoiseTypes.FIFTY.value
 
 async def receive_responses(websocket: websockets.WebSocketClientProtocol):
     """Listen for messages (predictions) from the server."""
-    global last_alpha_ratio
+    global last_alpha_ratio, last_pc1, last_pc2, last_energy
 
     try:
         async for msg in websocket:
@@ -157,7 +172,7 @@ async def receive_responses(websocket: websockets.WebSocketClientProtocol):
                 data = json.loads(msg)
 
                 # Check if it's a PredictionResponse
-                if "prediction" in data and "confidence" in data and "features" in data:
+                if all(key in data for key in ["prediction", "confidence", "features", "stats", "pc1", "pc2", "energy"]):
                     resp = PredictionResponse(**data)
                     # Display in console
                     display_prediction(resp)
@@ -165,6 +180,14 @@ async def receive_responses(websocket: websockets.WebSocketClientProtocol):
                     # Grab the alpha_ratio for our head map color
                     # (If it doesn't exist, default to 0)
                     last_alpha_ratio = resp.features.get("Alpha_Ratio", 0.0)
+
+                    # Update pc1, pc2, and energy
+                    last_pc1 = resp.pc1
+                    last_pc2 = resp.pc2
+                    last_energy = resp.energy
+
+                    # Update plots
+                    update_plots()
 
                 elif "error" in data:
                     clear_console()
@@ -184,7 +207,7 @@ async def receive_responses(websocket: websockets.WebSocketClientProtocol):
     except websockets.exceptions.ConnectionClosed:
         print("[INFO] Connection to server closed.")
     except Exception as e:
-        print("[ERROR] Unexpected error in receive_responses:", e)
+        print(f"[ERROR] Unexpected error in receive_responses:", e)
 
 def display_prediction(resp: PredictionResponse):
     """
@@ -205,6 +228,15 @@ def display_prediction(resp: PredictionResponse):
     feat_table = [(k, f"{v:.12f}") for k, v in resp.features.items()]
     print("\nFeatures:")
     print(tabulate(feat_table, headers=["Feature", "Value"], tablefmt="pretty"))
+
+    # Display pc1, pc2, and energy
+    pc_table = [
+        ["PC1", f"{resp.pc1:.4f}"],
+        ["PC2", f"{resp.pc2:.4f}"],
+        ["Energy", f"{resp.energy:.4f}"]
+    ]
+    print("\nPCA and Energy:")
+    print(tabulate(pc_table, headers=["Metric", "Value"], tablefmt="pretty"))
 
 def clear_console():
     """Clear the console on any OS."""
@@ -293,7 +325,7 @@ async def send_eeg_data(uri: str):
                 # print(f"[INFO] Sent {CHUNK_SIZE} filtered samples to server.")
 
                 # Update local plots
-                #update_plots()
+                # update_plots()  # Moved to after receiving prediction
 
                 # Sleep ~0.0333 seconds => ~30 times per second
                 await asyncio.sleep(DELAY)
