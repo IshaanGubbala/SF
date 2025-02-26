@@ -1,0 +1,2024 @@
+[
+    {
+        "label": "os,",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os.",
+        "description": "os.",
+        "detail": "os.",
+        "documentation": {}
+    },
+    {
+        "label": "numpy",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "numpy",
+        "description": "numpy",
+        "detail": "numpy",
+        "documentation": {}
+    },
+    {
+        "label": "pandas",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "pandas",
+        "description": "pandas",
+        "detail": "pandas",
+        "documentation": {}
+    },
+    {
+        "label": "matplotlib.pyplot",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "matplotlib.pyplot",
+        "description": "matplotlib.pyplot",
+        "detail": "matplotlib.pyplot",
+        "documentation": {}
+    },
+    {
+        "label": "seaborn",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "seaborn",
+        "description": "seaborn",
+        "detail": "seaborn",
+        "documentation": {}
+    },
+    {
+        "label": "tensorflow",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "tensorflow",
+        "description": "tensorflow",
+        "detail": "tensorflow",
+        "documentation": {}
+    },
+    {
+        "label": "StratifiedKFold",
+        "importPath": "sklearn.model_selection",
+        "description": "sklearn.model_selection",
+        "isExtraImport": true,
+        "detail": "sklearn.model_selection",
+        "documentation": {}
+    },
+    {
+        "label": "train_test_split",
+        "importPath": "sklearn.model_selection",
+        "description": "sklearn.model_selection",
+        "isExtraImport": true,
+        "detail": "sklearn.model_selection",
+        "documentation": {}
+    },
+    {
+        "label": "StratifiedKFold",
+        "importPath": "sklearn.model_selection",
+        "description": "sklearn.model_selection",
+        "isExtraImport": true,
+        "detail": "sklearn.model_selection",
+        "documentation": {}
+    },
+    {
+        "label": "train_test_split",
+        "importPath": "sklearn.model_selection",
+        "description": "sklearn.model_selection",
+        "isExtraImport": true,
+        "detail": "sklearn.model_selection",
+        "documentation": {}
+    },
+    {
+        "label": "StandardScaler",
+        "importPath": "sklearn.preprocessing",
+        "description": "sklearn.preprocessing",
+        "isExtraImport": true,
+        "detail": "sklearn.preprocessing",
+        "documentation": {}
+    },
+    {
+        "label": "StandardScaler",
+        "importPath": "sklearn.preprocessing",
+        "description": "sklearn.preprocessing",
+        "isExtraImport": true,
+        "detail": "sklearn.preprocessing",
+        "documentation": {}
+    },
+    {
+        "label": "StandardScaler",
+        "importPath": "sklearn.preprocessing",
+        "description": "sklearn.preprocessing",
+        "isExtraImport": true,
+        "detail": "sklearn.preprocessing",
+        "documentation": {}
+    },
+    {
+        "label": "classification_report",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "accuracy_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "precision_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "recall_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "f1_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "roc_auc_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "roc_curve",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "confusion_matrix",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "ConfusionMatrixDisplay",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "log_loss",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "log_loss",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "classification_report",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "accuracy_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "precision_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "recall_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "f1_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "roc_auc_score",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "roc_curve",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "confusion_matrix",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "log_loss",
+        "importPath": "sklearn.metrics",
+        "description": "sklearn.metrics",
+        "isExtraImport": true,
+        "detail": "sklearn.metrics",
+        "documentation": {}
+    },
+    {
+        "label": "SMOTE",
+        "importPath": "imblearn.over_sampling",
+        "description": "imblearn.over_sampling",
+        "isExtraImport": true,
+        "detail": "imblearn.over_sampling",
+        "documentation": {}
+    },
+    {
+        "label": "SMOTE",
+        "importPath": "imblearn.over_sampling",
+        "description": "imblearn.over_sampling",
+        "isExtraImport": true,
+        "detail": "imblearn.over_sampling",
+        "documentation": {}
+    },
+    {
+        "label": "tqdm",
+        "importPath": "tqdm",
+        "description": "tqdm",
+        "isExtraImport": true,
+        "detail": "tqdm",
+        "documentation": {}
+    },
+    {
+        "label": "tqdm",
+        "importPath": "tqdm",
+        "description": "tqdm",
+        "isExtraImport": true,
+        "detail": "tqdm",
+        "documentation": {}
+    },
+    {
+        "label": "ProcessPoolExecutor",
+        "importPath": "concurrent.futures",
+        "description": "concurrent.futures",
+        "isExtraImport": true,
+        "detail": "concurrent.futures",
+        "documentation": {}
+    },
+    {
+        "label": "mne",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "mne",
+        "description": "mne",
+        "detail": "mne",
+        "documentation": {}
+    },
+    {
+        "label": "networkx",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "networkx",
+        "description": "networkx",
+        "detail": "networkx",
+        "documentation": {}
+    },
+    {
+        "label": "torch",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch",
+        "description": "torch",
+        "detail": "torch",
+        "documentation": {}
+    },
+    {
+        "label": "torch.nn",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch.nn",
+        "description": "torch.nn",
+        "detail": "torch.nn",
+        "documentation": {}
+    },
+    {
+        "label": "torch.nn.functional",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "torch.nn.functional",
+        "description": "torch.nn.functional",
+        "detail": "torch.nn.functional",
+        "documentation": {}
+    },
+    {
+        "label": "Adam",
+        "importPath": "torch.optim",
+        "description": "torch.optim",
+        "isExtraImport": true,
+        "detail": "torch.optim",
+        "documentation": {}
+    },
+    {
+        "label": "Adam",
+        "importPath": "torch.optim",
+        "description": "torch.optim",
+        "isExtraImport": true,
+        "detail": "torch.optim",
+        "documentation": {}
+    },
+    {
+        "label": "Data",
+        "importPath": "torch_geometric.data",
+        "description": "torch_geometric.data",
+        "isExtraImport": true,
+        "detail": "torch_geometric.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch_geometric.data",
+        "description": "torch_geometric.data",
+        "isExtraImport": true,
+        "detail": "torch_geometric.data",
+        "documentation": {}
+    },
+    {
+        "label": "Data",
+        "importPath": "torch_geometric.data",
+        "description": "torch_geometric.data",
+        "isExtraImport": true,
+        "detail": "torch_geometric.data",
+        "documentation": {}
+    },
+    {
+        "label": "DataLoader",
+        "importPath": "torch_geometric.data",
+        "description": "torch_geometric.data",
+        "isExtraImport": true,
+        "detail": "torch_geometric.data",
+        "documentation": {}
+    },
+    {
+        "label": "GCNConv",
+        "importPath": "torch_geometric.nn",
+        "description": "torch_geometric.nn",
+        "isExtraImport": true,
+        "detail": "torch_geometric.nn",
+        "documentation": {}
+    },
+    {
+        "label": "global_mean_pool",
+        "importPath": "torch_geometric.nn",
+        "description": "torch_geometric.nn",
+        "isExtraImport": true,
+        "detail": "torch_geometric.nn",
+        "documentation": {}
+    },
+    {
+        "label": "GCNConv",
+        "importPath": "torch_geometric.nn",
+        "description": "torch_geometric.nn",
+        "isExtraImport": true,
+        "detail": "torch_geometric.nn",
+        "documentation": {}
+    },
+    {
+        "label": "global_mean_pool",
+        "importPath": "torch_geometric.nn",
+        "description": "torch_geometric.nn",
+        "isExtraImport": true,
+        "detail": "torch_geometric.nn",
+        "documentation": {}
+    },
+    {
+        "label": "SummaryWriter",
+        "importPath": "torch.utils.tensorboard",
+        "description": "torch.utils.tensorboard",
+        "isExtraImport": true,
+        "detail": "torch.utils.tensorboard",
+        "documentation": {}
+    },
+    {
+        "label": "SummaryWriter",
+        "importPath": "torch.utils.tensorboard",
+        "description": "torch.utils.tensorboard",
+        "isExtraImport": true,
+        "detail": "torch.utils.tensorboard",
+        "documentation": {}
+    },
+    {
+        "label": "njit",
+        "importPath": "numba",
+        "description": "numba",
+        "isExtraImport": true,
+        "detail": "numba",
+        "documentation": {}
+    },
+    {
+        "label": "njit",
+        "importPath": "numba",
+        "description": "numba",
+        "isExtraImport": true,
+        "detail": "numba",
+        "documentation": {}
+    },
+    {
+        "label": "asyncio",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "asyncio",
+        "description": "asyncio",
+        "detail": "asyncio",
+        "documentation": {}
+    },
+    {
+        "label": "websockets",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "websockets",
+        "description": "websockets",
+        "detail": "websockets",
+        "documentation": {}
+    },
+    {
+        "label": "json",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "json",
+        "description": "json",
+        "detail": "json",
+        "documentation": {}
+    },
+    {
+        "label": "time",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "time",
+        "description": "time",
+        "detail": "time",
+        "documentation": {}
+    },
+    {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
+        "label": "tabulate",
+        "importPath": "tabulate",
+        "description": "tabulate",
+        "isExtraImport": true,
+        "detail": "tabulate",
+        "documentation": {}
+    },
+    {
+        "label": "matplotlib",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "matplotlib",
+        "description": "matplotlib",
+        "detail": "matplotlib",
+        "documentation": {}
+    },
+    {
+        "label": "BoardShim",
+        "importPath": "brainflow.board_shim",
+        "description": "brainflow.board_shim",
+        "isExtraImport": true,
+        "detail": "brainflow.board_shim",
+        "documentation": {}
+    },
+    {
+        "label": "BrainFlowInputParams",
+        "importPath": "brainflow.board_shim",
+        "description": "brainflow.board_shim",
+        "isExtraImport": true,
+        "detail": "brainflow.board_shim",
+        "documentation": {}
+    },
+    {
+        "label": "BoardIds",
+        "importPath": "brainflow.board_shim",
+        "description": "brainflow.board_shim",
+        "isExtraImport": true,
+        "detail": "brainflow.board_shim",
+        "documentation": {}
+    },
+    {
+        "label": "DataFilter",
+        "importPath": "brainflow.data_filter",
+        "description": "brainflow.data_filter",
+        "isExtraImport": true,
+        "detail": "brainflow.data_filter",
+        "documentation": {}
+    },
+    {
+        "label": "FilterTypes",
+        "importPath": "brainflow.data_filter",
+        "description": "brainflow.data_filter",
+        "isExtraImport": true,
+        "detail": "brainflow.data_filter",
+        "documentation": {}
+    },
+    {
+        "label": "DetrendOperations",
+        "importPath": "brainflow.data_filter",
+        "description": "brainflow.data_filter",
+        "isExtraImport": true,
+        "detail": "brainflow.data_filter",
+        "documentation": {}
+    },
+    {
+        "label": "NoiseTypes",
+        "importPath": "brainflow.data_filter",
+        "description": "brainflow.data_filter",
+        "isExtraImport": true,
+        "detail": "brainflow.data_filter",
+        "documentation": {}
+    },
+    {
+        "label": "BaseModel",
+        "importPath": "pydantic",
+        "description": "pydantic",
+        "isExtraImport": true,
+        "detail": "pydantic",
+        "documentation": {}
+    },
+    {
+        "label": "ValidationError",
+        "importPath": "pydantic",
+        "description": "pydantic",
+        "isExtraImport": true,
+        "detail": "pydantic",
+        "documentation": {}
+    },
+    {
+        "label": "BaseModel",
+        "importPath": "pydantic",
+        "description": "pydantic",
+        "isExtraImport": true,
+        "detail": "pydantic",
+        "documentation": {}
+    },
+    {
+        "label": "ValidationError",
+        "importPath": "pydantic",
+        "description": "pydantic",
+        "isExtraImport": true,
+        "detail": "pydantic",
+        "documentation": {}
+    },
+    {
+        "label": "List",
+        "importPath": "typing",
+        "description": "typing",
+        "isExtraImport": true,
+        "detail": "typing",
+        "documentation": {}
+    },
+    {
+        "label": "Dict",
+        "importPath": "typing",
+        "description": "typing",
+        "isExtraImport": true,
+        "detail": "typing",
+        "documentation": {}
+    },
+    {
+        "label": "Any",
+        "importPath": "typing",
+        "description": "typing",
+        "isExtraImport": true,
+        "detail": "typing",
+        "documentation": {}
+    },
+    {
+        "label": "List",
+        "importPath": "typing",
+        "description": "typing",
+        "isExtraImport": true,
+        "detail": "typing",
+        "documentation": {}
+    },
+    {
+        "label": "Dict",
+        "importPath": "typing",
+        "description": "typing",
+        "isExtraImport": true,
+        "detail": "typing",
+        "documentation": {}
+    },
+    {
+        "label": "Any",
+        "importPath": "typing",
+        "description": "typing",
+        "isExtraImport": true,
+        "detail": "typing",
+        "documentation": {}
+    },
+    {
+        "label": "ray",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "ray",
+        "description": "ray",
+        "detail": "ray",
+        "documentation": {}
+    },
+    {
+        "label": "joblib",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "joblib",
+        "description": "joblib",
+        "detail": "joblib",
+        "documentation": {}
+    },
+    {
+        "label": "FastAPI",
+        "importPath": "fastapi",
+        "description": "fastapi",
+        "isExtraImport": true,
+        "detail": "fastapi",
+        "documentation": {}
+    },
+    {
+        "label": "WebSocket",
+        "importPath": "fastapi",
+        "description": "fastapi",
+        "isExtraImport": true,
+        "detail": "fastapi",
+        "documentation": {}
+    },
+    {
+        "label": "WebSocketDisconnect",
+        "importPath": "fastapi",
+        "description": "fastapi",
+        "isExtraImport": true,
+        "detail": "fastapi",
+        "documentation": {}
+    },
+    {
+        "label": "HTTPException",
+        "importPath": "fastapi",
+        "description": "fastapi",
+        "isExtraImport": true,
+        "detail": "fastapi",
+        "documentation": {}
+    },
+    {
+        "label": "PCA",
+        "importPath": "sklearn.decomposition",
+        "description": "sklearn.decomposition",
+        "isExtraImport": true,
+        "detail": "sklearn.decomposition",
+        "documentation": {}
+    },
+    {
+        "label": "ttest_ind",
+        "importPath": "scipy.stats",
+        "description": "scipy.stats",
+        "isExtraImport": true,
+        "detail": "scipy.stats",
+        "documentation": {}
+    },
+    {
+        "label": "uvicorn",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "uvicorn",
+        "description": "uvicorn",
+        "detail": "uvicorn",
+        "documentation": {}
+    },
+    {
+        "label": "warnings",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "warnings",
+        "description": "warnings",
+        "detail": "warnings",
+        "documentation": {}
+    },
+    {
+        "label": "deque",
+        "importPath": "collections",
+        "description": "collections",
+        "isExtraImport": true,
+        "detail": "collections",
+        "documentation": {}
+    },
+    {
+        "label": "griddata",
+        "importPath": "scipy.interpolate",
+        "description": "scipy.interpolate",
+        "isExtraImport": true,
+        "detail": "scipy.interpolate",
+        "documentation": {}
+    },
+    {
+        "label": "CORSMiddleware",
+        "importPath": "fastapi.middleware.cors",
+        "description": "fastapi.middleware.cors",
+        "isExtraImport": true,
+        "detail": "fastapi.middleware.cors",
+        "documentation": {}
+    },
+    {
+        "label": "register_keras_serializable",
+        "importPath": "tensorflow.keras.utils",
+        "description": "tensorflow.keras.utils",
+        "isExtraImport": true,
+        "detail": "tensorflow.keras.utils",
+        "documentation": {}
+    },
+    {
+        "label": "Layer",
+        "importPath": "tensorflow.keras.layers",
+        "description": "tensorflow.keras.layers",
+        "isExtraImport": true,
+        "detail": "tensorflow.keras.layers",
+        "documentation": {}
+    },
+    {
+        "label": "GCNNet",
+        "kind": 6,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "class GCNNet(nn.Module):\n    def __init__(self, in_channels, hidden_channels, num_classes):\n        super(GCNNet, self).__init__()\n        self.conv1 = GCNConv(in_channels, hidden_channels)\n        self.conv2 = GCNConv(hidden_channels, hidden_channels)\n        self.lin = nn.Linear(hidden_channels, num_classes)\n    def forward(self, x, edge_index, batch):\n        x = F.relu(self.conv1(x, edge_index))\n        x = F.relu(self.conv2(x, edge_index))\n        x = global_mean_pool(x, batch)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "load_participant_labels",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def load_participant_labels(ds004504_file, ds003800_file):\n    label_dict = {}\n    group_map_ds004504 = {\"A\": 1, \"C\": 0}\n    df_ds004504 = pd.read_csv(ds004504_file, sep=\"\\t\")\n    df_ds004504 = df_ds004504[df_ds004504['Group'] != 'F']\n    df_ds004504 = df_ds004504[df_ds004504['Group'].isin(group_map_ds004504.keys())]\n    labels_ds004504 = df_ds004504.set_index(\"participant_id\")[\"Group\"].map(group_map_ds004504).to_dict()\n    label_dict.update(labels_ds004504)\n    df_ds003800 = pd.read_csv(ds003800_file, sep=\"\\t\")\n    labels_ds003800 = df_ds003800.set_index(\"participant_id\")[\"Group\"].apply(lambda x: 1).to_dict()",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "compute_band_powers",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def compute_band_powers(data, sfreq):\n    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sfreq, verbose=False)\n    band_powers = {band: np.mean(psd[:, :, (freqs >= fmin) & (freqs <= fmax)], axis=2)\n                   for band, (fmin, fmax) in FREQUENCY_BANDS.items()}\n    return band_powers\ndef compute_shannon_entropy(data):\n    def entropy_fn(x):\n        counts, _ = np.histogram(x, bins=256)\n        p = counts / np.sum(counts)\n        return -np.sum(p * np.log2(p + 1e-12))",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "compute_shannon_entropy",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def compute_shannon_entropy(data):\n    def entropy_fn(x):\n        counts, _ = np.histogram(x, bins=256)\n        p = counts / np.sum(counts)\n        return -np.sum(p * np.log2(p + 1e-12))\n    return np.apply_along_axis(entropy_fn, 1, data)\n@njit\ndef compute_hjorth_parameters_numba(data):\n    n_epochs, n_channels, n_times = data.shape\n    activities = np.empty(n_epochs, dtype=np.float64)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "compute_hjorth_parameters_numba",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def compute_hjorth_parameters_numba(data):\n    n_epochs, n_channels, n_times = data.shape\n    activities = np.empty(n_epochs, dtype=np.float64)\n    mobilities = np.empty(n_epochs, dtype=np.float64)\n    complexities = np.empty(n_epochs, dtype=np.float64)\n    for i in range(n_epochs):\n        var0 = np.empty(n_channels, dtype=np.float64)\n        for j in range(n_channels):\n            s = 0.0\n            for k in range(n_times):",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "extract_features_epoch",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def extract_features_epoch(epoch_data):\n    data = epoch_data[np.newaxis, :, :]\n    band_powers = compute_band_powers(data, SAMPLING_RATE)\n    features = [np.mean(band_powers[band]) for band in FREQUENCY_BANDS.keys()]\n    alpha_power = np.mean(band_powers[\"Alpha1\"]) + np.mean(band_powers[\"Alpha2\"])\n    theta_power = np.mean(band_powers[\"Theta1\"]) + np.mean(band_powers[\"Theta2\"])\n    total_power = sum(np.mean(band_powers[band]) for band in FREQUENCY_BANDS.keys()) + 1e-12\n    features.extend([alpha_power/total_power, theta_power/total_power])\n    sh_entropy = np.mean(compute_shannon_entropy(data))\n    features.append(sh_entropy)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "process_subject_handcrafted",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def process_subject_handcrafted(file, label):\n    try:\n        raw = mne.io.read_raw_eeglab(file, preload=True, verbose=False)\n        raw.filter(1.0, 50.0, fir_design=\"firwin\", verbose=False)\n        raw.resample(SAMPLING_RATE, npad=\"auto\")\n        epochs = mne.make_fixed_length_epochs(raw, duration=20.0, overlap=0.0, verbose=False)\n        data = epochs.get_data()\n        if data.size == 0:\n            raise ValueError(\"No data extracted from epochs.\")\n        epoch_features = np.array([extract_features_epoch(epoch) for epoch in data])",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "run_process_subject_handcrafted",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def run_process_subject_handcrafted(args):\n    return process_subject_handcrafted(*args)\ndef load_dataset_handcrafted():\n    dataset_paths = [DS004504_PATH, DS003800_PATH]\n    all_files = []\n    for path in dataset_paths:\n        pattern = os.path.join(path, \"**\", \"*_task-Rest_eeg.set\") if 'ds003800' in path else os.path.join(path, \"**\", \"*.set\")\n        files = glob.glob(pattern, recursive=True)\n        all_files.extend(files)\n    tasks = [(f, participant_labels.get(os.path.basename(f).split('_')[0], None))",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "load_dataset_handcrafted",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def load_dataset_handcrafted():\n    dataset_paths = [DS004504_PATH, DS003800_PATH]\n    all_files = []\n    for path in dataset_paths:\n        pattern = os.path.join(path, \"**\", \"*_task-Rest_eeg.set\") if 'ds003800' in path else os.path.join(path, \"**\", \"*.set\")\n        files = glob.glob(pattern, recursive=True)\n        all_files.extend(files)\n    tasks = [(f, participant_labels.get(os.path.basename(f).split('_')[0], None))\n             for f in all_files if participant_labels.get(os.path.basename(f).split('_')[0], None) is not None]\n    features_list = []",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "extract_channel_features_GNN_epoch",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def extract_channel_features_GNN_epoch(epoch_data, sfreq):\n    n_channels = epoch_data.shape[0]\n    features = np.zeros((n_channels, len(FREQUENCY_BANDS)), dtype=np.float32)\n    for ch in range(n_channels):\n        ts = epoch_data[ch, :]\n        psd, freqs = mne.time_frequency.psd_array_multitaper(ts[np.newaxis, :], sfreq=sfreq, verbose=False)\n        band_vals = []\n        for band, (fmin, fmax) in FREQUENCY_BANDS.items():\n            idx = (freqs >= fmin) & (freqs <= fmax)\n            band_vals.append(np.mean(psd[0, idx]))",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "process_subject_gnn",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def process_subject_gnn(file, label):\n    try:\n        raw = mne.io.read_raw_eeglab(file, preload=True, verbose=False)\n        raw.filter(1.0, 50.0, fir_design=\"firwin\", verbose=False)\n        raw.resample(SAMPLING_RATE, npad=\"auto\")\n        raw = mne.preprocessing.compute_current_source_density(raw)\n        epochs = mne.make_fixed_length_epochs(raw, duration=20.0, overlap=0.0, verbose=False)\n        data = epochs.get_data()\n        if data.size == 0:\n            raise ValueError(\"No data extracted from epochs.\")",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "run_process_subject_gnn",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def run_process_subject_gnn(args):\n    return process_subject_gnn(*args)\ndef load_dataset_gnn():\n    dataset_paths = [DS004504_PATH, DS003800_PATH]\n    all_files = []\n    for path in dataset_paths:\n        pattern = os.path.join(path, \"**\", \"*_task-Rest_eeg.set\") if 'ds003800' in path else os.path.join(path, \"**\", \"*.set\")\n        files = glob.glob(pattern, recursive=True)\n        all_files.extend(files)\n    tasks = [(f, participant_labels.get(os.path.basename(f).split('_')[0], None))",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "load_dataset_gnn",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def load_dataset_gnn():\n    dataset_paths = [DS004504_PATH, DS003800_PATH]\n    all_files = []\n    for path in dataset_paths:\n        pattern = os.path.join(path, \"**\", \"*_task-Rest_eeg.set\") if 'ds003800' in path else os.path.join(path, \"**\", \"*.set\")\n        files = glob.glob(pattern, recursive=True)\n        all_files.extend(files)\n    tasks = [(f, participant_labels.get(os.path.basename(f).split('_')[0], None))\n             for f in all_files if participant_labels.get(os.path.basename(f).split('_')[0], None) is not None]\n    features_list = []",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "aggregate_gnn_input",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def aggregate_gnn_input(X_channels):\n    return np.mean(X_channels, axis=1)  # (n_subjects, n_channels, n_band_features)\n# --------------------------------------------------------------------------------\n# 5) PyTorch Geometric GCN MODEL DEFINITION (with classification head)\n# --------------------------------------------------------------------------------\nclass GCNNet(nn.Module):\n    def __init__(self, in_channels, hidden_channels, num_classes):\n        super(GCNNet, self).__init__()\n        self.conv1 = GCNConv(in_channels, hidden_channels)\n        self.conv2 = GCNConv(hidden_channels, hidden_channels)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "compute_adjacency_matrix",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def compute_adjacency_matrix(ch_names):\n    montage = mne.channels.make_standard_montage('standard_1020')\n    pos_dict = montage.get_positions()['ch_pos']\n    nodes = []\n    for ch in ch_names:\n        if ch in pos_dict:\n            nodes.append(pos_dict[ch])\n    nodes = np.array(nodes)\n    from scipy.spatial.distance import pdist, squareform\n    D = squareform(pdist(nodes))",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "create_pyg_dataset",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def create_pyg_dataset(X_subjects, y, ch_names):\n    A = compute_adjacency_matrix(ch_names)\n    edge_index = np.array(np.nonzero(A))\n    edge_index = torch.tensor(edge_index, dtype=torch.long)\n    pyg_data_list = []\n    for i in range(X_subjects.shape[0]):\n        x = torch.tensor(X_subjects[i], dtype=torch.float)\n        y_val = torch.tensor([y[i]], dtype=torch.long)\n        data_obj = Data(x=x, edge_index=edge_index, y=y_val)\n        pyg_data_list.append(data_obj)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "train_sgd_logistic_tb",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def train_sgd_logistic_tb(X_train, y_train, epochs=200, log_dir=\"./logs/sgd_logreg\"):\n    from sklearn.linear_model import SGDClassifier\n    writer = SummaryWriter(log_dir=log_dir)\n    clf = SGDClassifier(loss=\"modified_huber\", penalty=\"l2\", verbose=1,learning_rate=\"optimal\", random_state=5)\n    classes = np.unique(y_train)\n    loss_history = []\n    for epoch in range(1, epochs+1):\n        clf.partial_fit(X_train, y_train, classes=classes)\n        y_pred_proba = clf.predict_proba(X_train)\n        loss = log_loss(y_train, y_pred_proba)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "train_mlp_tb",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def train_mlp_tb(X_train, y_train, epochs=200, log_dir=\"./logs/mlp\"):\n    from sklearn.neural_network import MLPClassifier\n    writer = SummaryWriter(log_dir=log_dir)\n    mlp = MLPClassifier(hidden_layer_sizes=(26,14), activation='logistic', solver='adam', max_iter=2, verbose=1,warm_start=False, random_state=5)\n    loss_history = []\n    for epoch in range(1, epochs+1):\n        mlp.partial_fit(X_train, y_train, classes=np.unique(y_train))\n        # scikit-learn's MLPClassifier doesn't provide loss_ after partial_fit in every version,\n        # so we compute log_loss manually:\n        y_pred_proba = mlp.predict_proba(X_train)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "visualize_sgd_architecture",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def visualize_sgd_architecture(clf):\n    # For a linear model, we can plot the coefficients as a bar chart.\n    coef = clf.coef_.flatten()\n    plt.figure(figsize=(10,5))\n    plt.bar(np.arange(len(coef)), coef)\n    plt.xlabel(\"Feature Index\")\n    plt.ylabel(\"Coefficient Value\")\n    plt.title(\"SGD Logistic Regression Coefficients\")\n    plt.tight_layout()\n    plt.savefig(os.path.join(PLOTS_DIR, \"sgd_logreg_coeff.png\"))",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "visualize_mlp_architecture",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def visualize_mlp_architecture(mlp):\n    # Visualize each weight matrix from the MLP as a heatmap.\n    for i, W in enumerate(mlp.coefs_):\n        plt.figure(figsize=(6,4))\n        sns.heatmap(W, annot=False, cmap=\"viridis\")\n        plt.title(f\"MLP Layer {i+1} Weight Matrix\")\n        plt.xlabel(\"Output Nodes\")\n        plt.ylabel(\"Input Nodes\")\n        plt.tight_layout()\n        plt.savefig(os.path.join(PLOTS_DIR, f\"mlp_layer_{i+1}_weights.png\"))",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "downstream_classification",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def downstream_classification(CCV, y):\n    from sklearn.model_selection import StratifiedKFold\n    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=5)\n    sgd_acc_list, sgd_auc_list = [], []\n    mlp_acc_list, mlp_auc_list = [], []\n    all_fprs_sgd, all_tprs_sgd = [], []\n    all_fprs_mlp, all_tprs_mlp = [], []\n    for fold, (train_idx, test_idx) in enumerate(skf.split(CCV, y), start=1):\n        X_train, X_test = CCV[train_idx], CCV[test_idx]\n        y_train, y_test = y[train_idx], y[test_idx]",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "process_subject_combined",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def process_subject_combined(args):\n    file, label = args\n    try:\n        # Handcrafted branch (without Laplacian)\n        raw = mne.io.read_raw_eeglab(file, preload=True, verbose=False)\n        raw.filter(1.0, 50.0, fir_design=\"firwin\", verbose=False)\n        raw.resample(SAMPLING_RATE, npad=\"auto\")\n        epochs = mne.make_fixed_length_epochs(raw, duration=20.0, overlap=0.0, verbose=False)\n        data = epochs.get_data()\n        if data.size == 0:",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "run_process_subject_combined",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def run_process_subject_combined(args):\n    return process_subject_combined(args)\ndef load_combined_dataset():\n    dataset_paths = [DS004504_PATH, DS003800_PATH]\n    all_files = []\n    for path in dataset_paths:\n        pattern = os.path.join(path, \"**\", \"*_task-Rest_eeg.set\") if 'ds003800' in path else os.path.join(path, \"**\", \"*.set\")\n        files = glob.glob(pattern, recursive=True)\n        all_files.extend(files)\n    tasks = [(f, participant_labels.get(os.path.basename(f).split('_')[0], None))",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "load_combined_dataset",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def load_combined_dataset():\n    dataset_paths = [DS004504_PATH, DS003800_PATH]\n    all_files = []\n    for path in dataset_paths:\n        pattern = os.path.join(path, \"**\", \"*_task-Rest_eeg.set\") if 'ds003800' in path else os.path.join(path, \"**\", \"*.set\")\n        files = glob.glob(pattern, recursive=True)\n        all_files.extend(files)\n    tasks = [(f, participant_labels.get(os.path.basename(f).split('_')[0], None))\n             for f in all_files if participant_labels.get(os.path.basename(f).split('_')[0], None) is not None]\n    hand_features_list = []",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "def main():\n    np.random.seed(5)\n    tf.random.set_seed(5)\n    # Load combined dataset\n    X_handcrafted, y, X_gnn_raw, ch_names = load_combined_dataset()\n    print(f\"[DEBUG] Handcrafted global features: {X_handcrafted.shape[0]} subjects, {X_handcrafted.shape[1]} features.\")\n    # X_gnn_raw is aggregated per subject; shape: (n_subjects, n_channels, n_band_features)\n    X_gnn = X_gnn_raw\n    # Create PyG dataset from aggregated GNN features\n    pyg_dataset = create_pyg_dataset(X_gnn, y, ch_names)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"TF_CPP_MIN_LOG_LEVEL\"]",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "os.environ[\"TF_CPP_MIN_LOG_LEVEL\"] = \"3\"\n# --------------------------------------------------------------------------------\n# CONFIGURATION\n# --------------------------------------------------------------------------------\nDS004504_PATH = \"/Users/ishaangubbala/Documents/SF/ds004504/derivatives\"\nDS003800_PATH = \"/Users/ishaangubbala/Documents/SF/ds003800/\"\nPARTICIPANTS_FILE_DS004504 = \"/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv\"\nPARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "DS004504_PATH",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "DS004504_PATH = \"/Users/ishaangubbala/Documents/SF/ds004504/derivatives\"\nDS003800_PATH = \"/Users/ishaangubbala/Documents/SF/ds003800/\"\nPARTICIPANTS_FILE_DS004504 = \"/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv\"\nPARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "DS003800_PATH",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "DS003800_PATH = \"/Users/ishaangubbala/Documents/SF/ds003800/\"\nPARTICIPANTS_FILE_DS004504 = \"/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv\"\nPARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "PARTICIPANTS_FILE_DS004504",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "PARTICIPANTS_FILE_DS004504 = \"/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv\"\nPARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}\nFEATURE_ANALYSIS_DIR = \"feature_analysis\"",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "PARTICIPANTS_FILE_DS003800",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "PARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}\nFEATURE_ANALYSIS_DIR = \"feature_analysis\"\nMODELS_DIR = \"trained_models\"",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "SAMPLING_RATE",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "SAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}\nFEATURE_ANALYSIS_DIR = \"feature_analysis\"\nMODELS_DIR = \"trained_models\"\nPLOTS_DIR = \"plots\"",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "FREQUENCY_BANDS",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "FREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}\nFEATURE_ANALYSIS_DIR = \"feature_analysis\"\nMODELS_DIR = \"trained_models\"\nPLOTS_DIR = \"plots\"\nLOG_DIR = \"./logs\"",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "FEATURE_ANALYSIS_DIR",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "FEATURE_ANALYSIS_DIR = \"feature_analysis\"\nMODELS_DIR = \"trained_models\"\nPLOTS_DIR = \"plots\"\nLOG_DIR = \"./logs\"\nfor d in [FEATURE_ANALYSIS_DIR, MODELS_DIR, PLOTS_DIR, LOG_DIR]:\n    os.makedirs(d, exist_ok=True)\n# --------------------------------------------------------------------------------\n# 1) LOAD PARTICIPANT LABELS\n# --------------------------------------------------------------------------------\ndef load_participant_labels(ds004504_file, ds003800_file):",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "MODELS_DIR",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "MODELS_DIR = \"trained_models\"\nPLOTS_DIR = \"plots\"\nLOG_DIR = \"./logs\"\nfor d in [FEATURE_ANALYSIS_DIR, MODELS_DIR, PLOTS_DIR, LOG_DIR]:\n    os.makedirs(d, exist_ok=True)\n# --------------------------------------------------------------------------------\n# 1) LOAD PARTICIPANT LABELS\n# --------------------------------------------------------------------------------\ndef load_participant_labels(ds004504_file, ds003800_file):\n    label_dict = {}",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "PLOTS_DIR",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "PLOTS_DIR = \"plots\"\nLOG_DIR = \"./logs\"\nfor d in [FEATURE_ANALYSIS_DIR, MODELS_DIR, PLOTS_DIR, LOG_DIR]:\n    os.makedirs(d, exist_ok=True)\n# --------------------------------------------------------------------------------\n# 1) LOAD PARTICIPANT LABELS\n# --------------------------------------------------------------------------------\ndef load_participant_labels(ds004504_file, ds003800_file):\n    label_dict = {}\n    group_map_ds004504 = {\"A\": 1, \"C\": 0}",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "LOG_DIR",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "LOG_DIR = \"./logs\"\nfor d in [FEATURE_ANALYSIS_DIR, MODELS_DIR, PLOTS_DIR, LOG_DIR]:\n    os.makedirs(d, exist_ok=True)\n# --------------------------------------------------------------------------------\n# 1) LOAD PARTICIPANT LABELS\n# --------------------------------------------------------------------------------\ndef load_participant_labels(ds004504_file, ds003800_file):\n    label_dict = {}\n    group_map_ds004504 = {\"A\": 1, \"C\": 0}\n    df_ds004504 = pd.read_csv(ds004504_file, sep=\"\\t\")",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "participant_labels",
+        "kind": 5,
+        "importPath": "ai_model",
+        "description": "ai_model",
+        "peekOfCode": "participant_labels = load_participant_labels(PARTICIPANTS_FILE_DS004504, PARTICIPANTS_FILE_DS003800)\n# --------------------------------------------------------------------------------\n# 2) HANDCRAFTED FEATURE EXTRACTION (Per Epoch) and Aggregation\n# --------------------------------------------------------------------------------\ndef compute_band_powers(data, sfreq):\n    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sfreq, verbose=False)\n    band_powers = {band: np.mean(psd[:, :, (freqs >= fmin) & (freqs <= fmax)], axis=2)\n                   for band, (fmin, fmax) in FREQUENCY_BANDS.items()}\n    return band_powers\ndef compute_shannon_entropy(data):",
+        "detail": "ai_model",
+        "documentation": {}
+    },
+    {
+        "label": "EEGSample",
+        "kind": 6,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "class EEGSample(BaseModel):\n    channels: List[float]  # one sample\nclass EEGData(BaseModel):\n    data: List[EEGSample]\nclass PredictionResponse(BaseModel):\n    prediction: int\n    confidence: float\n    features: Dict[str, float]\n    stats: Dict[str, Dict[str, float]]\n    pc1: float",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "EEGData",
+        "kind": 6,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "class EEGData(BaseModel):\n    data: List[EEGSample]\nclass PredictionResponse(BaseModel):\n    prediction: int\n    confidence: float\n    features: Dict[str, float]\n    stats: Dict[str, Dict[str, float]]\n    pc1: float\n    pc2: float\n    energy: float",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "PredictionResponse",
+        "kind": 6,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "class PredictionResponse(BaseModel):\n    prediction: int\n    confidence: float\n    features: Dict[str, float]\n    stats: Dict[str, Dict[str, float]]\n    pc1: float\n    pc2: float\n    energy: float\n# --------------------------------------------------------------------------------\n# Example: Real-Time Plot Setup (Matplotlib)",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "update_plots",
+        "kind": 2,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "def update_plots():\n    \"\"\"\n    Update the time-series plot (4 channels) and the head map (color).\n    \"\"\"\n    global channel_data, last_alpha_ratio, last_pc1, last_pc2, last_energy\n    # 1) Update the time-series plot\n    # Each channel_data[i,:] is a 1D array of amplitude over time\n    num_points = channel_data.shape[1]\n    # We want x-values from 0..num_points\n    x_vals = np.arange(num_points)",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "display_prediction",
+        "kind": 2,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "def display_prediction(resp: PredictionResponse):\n    \"\"\"\n    Print the prediction response in a tabulated format, including features.\n    \"\"\"\n    clear_console()\n    pred_label = \"Alzheimer\" if resp.prediction == 1 else \"Control\"\n    conf_str = f\"{resp.confidence * 100:.2f}%\"\n    # Basic table of classification\n    table_data = [\n        [\"Class\", pred_label],",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "clear_console",
+        "kind": 2,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "def clear_console():\n    \"\"\"Clear the console on any OS.\"\"\"\n    os.system(\"cls\" if os.name == \"nt\" else \"clear\")\nasync def send_eeg_data(uri: str):\n    \"\"\"\n    Acquire EEG from BrainFlow, apply typical EEG filtering, remove 50 Hz noise,\n    reference channel 1, send data to server. Update the local real-time plot.\n    \"\"\"\n    global channel_data\n    params = BrainFlowInputParams()",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "run_client",
+        "kind": 2,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "def run_client():\n    asyncio.run(send_eeg_data(SERVER_URI))\nif __name__ == \"__main__\":\n    try:\n        run_client()\n    except KeyboardInterrupt:\n        print(\"[INFO] Client stopped manually.\")",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "EEG_POSITIONS",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "EEG_POSITIONS = {\n    \"Fp1\": (-0.5, 1.0),\n    \"Fp2\": (0.5, 1.0),\n    \"C3\": (-0.7, 0.0),\n    \"C4\": (0.7, 0.0)\n}\n# Initialize Matplotlib in interactive mode\nplt.ion()\nfig, (ax_time, ax_head) = plt.subplots(1, 2, figsize=(12, 6))\nfig.suptitle(\"Real-Time EEG Visualization\")",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "MAX_PLOT_SAMPLES",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "MAX_PLOT_SAMPLES = 1280\nchannel_data = np.zeros((4, 0))  # shape: (4_channels, time_samples)\n# A simple mapping from your BoardShim EEG channel indices to [Fp1, Fp2, C3, C4]\n# **Adjust** if needed\nCHANNEL_MAP = {\n    0: \"Fp1\",\n    1: \"Fp2\",\n    2: \"C3\",\n    3: \"C4\"\n}",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "channel_data",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "channel_data = np.zeros((4, 0))  # shape: (4_channels, time_samples)\n# A simple mapping from your BoardShim EEG channel indices to [Fp1, Fp2, C3, C4]\n# **Adjust** if needed\nCHANNEL_MAP = {\n    0: \"Fp1\",\n    1: \"Fp2\",\n    2: \"C3\",\n    3: \"C4\"\n}\n# We will store the \"alpha_ratio\" from the last prediction",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "CHANNEL_MAP",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "CHANNEL_MAP = {\n    0: \"Fp1\",\n    1: \"Fp2\",\n    2: \"C3\",\n    3: \"C4\"\n}\n# We will store the \"alpha_ratio\" from the last prediction\nlast_alpha_ratio = 0.0\n# Initialize variables to store pc1, pc2, and energy\nlast_pc1 = 0.0",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "last_alpha_ratio",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "last_alpha_ratio = 0.0\n# Initialize variables to store pc1, pc2, and energy\nlast_pc1 = 0.0\nlast_pc2 = 0.0\nlast_energy = 0.0\n# Create line objects for each channel in ax_time\nlines = []\ncolors = [\"blue\", \"red\", \"green\", \"purple\"]\nfor i in range(4):\n    line_obj, = ax_time.plot([], [], color=colors[i], label=f\"{CHANNEL_MAP[i]}\")",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "last_pc1",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "last_pc1 = 0.0\nlast_pc2 = 0.0\nlast_energy = 0.0\n# Create line objects for each channel in ax_time\nlines = []\ncolors = [\"blue\", \"red\", \"green\", \"purple\"]\nfor i in range(4):\n    line_obj, = ax_time.plot([], [], color=colors[i], label=f\"{CHANNEL_MAP[i]}\")\n    lines.append(line_obj)\nax_time.set_xlim(0, MAX_PLOT_SAMPLES)",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "last_pc2",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "last_pc2 = 0.0\nlast_energy = 0.0\n# Create line objects for each channel in ax_time\nlines = []\ncolors = [\"blue\", \"red\", \"green\", \"purple\"]\nfor i in range(4):\n    line_obj, = ax_time.plot([], [], color=colors[i], label=f\"{CHANNEL_MAP[i]}\")\n    lines.append(line_obj)\nax_time.set_xlim(0, MAX_PLOT_SAMPLES)\nax_time.set_ylim(-100e-6, 100e-6)  # Adjust y-limits based on your amplitude",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "last_energy",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "last_energy = 0.0\n# Create line objects for each channel in ax_time\nlines = []\ncolors = [\"blue\", \"red\", \"green\", \"purple\"]\nfor i in range(4):\n    line_obj, = ax_time.plot([], [], color=colors[i], label=f\"{CHANNEL_MAP[i]}\")\n    lines.append(line_obj)\nax_time.set_xlim(0, MAX_PLOT_SAMPLES)\nax_time.set_ylim(-100e-6, 100e-6)  # Adjust y-limits based on your amplitude\nax_time.set_xlabel(\"Samples (rolling window)\")",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "lines",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "lines = []\ncolors = [\"blue\", \"red\", \"green\", \"purple\"]\nfor i in range(4):\n    line_obj, = ax_time.plot([], [], color=colors[i], label=f\"{CHANNEL_MAP[i]}\")\n    lines.append(line_obj)\nax_time.set_xlim(0, MAX_PLOT_SAMPLES)\nax_time.set_ylim(-100e-6, 100e-6)  # Adjust y-limits based on your amplitude\nax_time.set_xlabel(\"Samples (rolling window)\")\nax_time.set_ylabel(\"Amplitude (Volts)\")\nax_time.legend(loc='upper right')",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "colors",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "colors = [\"blue\", \"red\", \"green\", \"purple\"]\nfor i in range(4):\n    line_obj, = ax_time.plot([], [], color=colors[i], label=f\"{CHANNEL_MAP[i]}\")\n    lines.append(line_obj)\nax_time.set_xlim(0, MAX_PLOT_SAMPLES)\nax_time.set_ylim(-100e-6, 100e-6)  # Adjust y-limits based on your amplitude\nax_time.set_xlabel(\"Samples (rolling window)\")\nax_time.set_ylabel(\"Amplitude (Volts)\")\nax_time.legend(loc='upper right')\nax_time.grid(True)",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "head_scatter",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "head_scatter = ax_head.scatter(\n    [p[0] for p in EEG_POSITIONS.values()],\n    [p[1] for p in EEG_POSITIONS.values()],\n    c=\"gray\",\n    s=200\n)\nax_head.set_xlim(-1.2, 1.2)\nax_head.set_ylim(-1.2, 1.5)\nax_head.set_aspect(\"equal\", \"box\")\nax_head.set_title(\"Head Map (Alpha Ratio Color)\")",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "head_coords",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "head_coords = list(EEG_POSITIONS.values())\ndef update_plots():\n    \"\"\"\n    Update the time-series plot (4 channels) and the head map (color).\n    \"\"\"\n    global channel_data, last_alpha_ratio, last_pc1, last_pc2, last_energy\n    # 1) Update the time-series plot\n    # Each channel_data[i,:] is a 1D array of amplitude over time\n    num_points = channel_data.shape[1]\n    # We want x-values from 0..num_points",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "SERVER_URI",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "SERVER_URI = \"ws://10.148.82.49:8000/ws\"  # Adjust to your server IP/port\nBOARD_ID = BoardIds.SYNTHETIC_BOARD.value  # Synthetic board for demonstration\nSERIAL_PORT = \"\"\nSAMPLING_RATE = 256\nCHUNK_SIZE = 256   # 1 second of data at 256 Hz\nDELAY = 0.0333     # ~30 updates per second\nBANDPASS_CENTER_FREQ = 25.5\nBANDPASS_BANDWIDTH = 49.0\nFILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "BOARD_ID",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "BOARD_ID = BoardIds.SYNTHETIC_BOARD.value  # Synthetic board for demonstration\nSERIAL_PORT = \"\"\nSAMPLING_RATE = 256\nCHUNK_SIZE = 256   # 1 second of data at 256 Hz\nDELAY = 0.0333     # ~30 updates per second\nBANDPASS_CENTER_FREQ = 25.5\nBANDPASS_BANDWIDTH = 49.0\nFILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "SERIAL_PORT",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "SERIAL_PORT = \"\"\nSAMPLING_RATE = 256\nCHUNK_SIZE = 256   # 1 second of data at 256 Hz\nDELAY = 0.0333     # ~30 updates per second\nBANDPASS_CENTER_FREQ = 25.5\nBANDPASS_BANDWIDTH = 49.0\nFILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "SAMPLING_RATE",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "SAMPLING_RATE = 256\nCHUNK_SIZE = 256   # 1 second of data at 256 Hz\nDELAY = 0.0333     # ~30 updates per second\nBANDPASS_CENTER_FREQ = 25.5\nBANDPASS_BANDWIDTH = 49.0\nFILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------\n# Async Functions",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "CHUNK_SIZE",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "CHUNK_SIZE = 256   # 1 second of data at 256 Hz\nDELAY = 0.0333     # ~30 updates per second\nBANDPASS_CENTER_FREQ = 25.5\nBANDPASS_BANDWIDTH = 49.0\nFILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------\n# Async Functions\n# --------------------------------------------------------------------------------",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "DELAY",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "DELAY = 0.0333     # ~30 updates per second\nBANDPASS_CENTER_FREQ = 25.5\nBANDPASS_BANDWIDTH = 49.0\nFILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------\n# Async Functions\n# --------------------------------------------------------------------------------\nasync def receive_responses(websocket: websockets.WebSocketClientProtocol):",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "BANDPASS_CENTER_FREQ",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "BANDPASS_CENTER_FREQ = 25.5\nBANDPASS_BANDWIDTH = 49.0\nFILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------\n# Async Functions\n# --------------------------------------------------------------------------------\nasync def receive_responses(websocket: websockets.WebSocketClientProtocol):\n    \"\"\"Listen for messages (predictions) from the server.\"\"\"",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "BANDPASS_BANDWIDTH",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "BANDPASS_BANDWIDTH = 49.0\nFILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------\n# Async Functions\n# --------------------------------------------------------------------------------\nasync def receive_responses(websocket: websockets.WebSocketClientProtocol):\n    \"\"\"Listen for messages (predictions) from the server.\"\"\"\n    global last_alpha_ratio, last_pc1, last_pc2, last_energy",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "FILTER_ORDER",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "FILTER_ORDER = 4\nFILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------\n# Async Functions\n# --------------------------------------------------------------------------------\nasync def receive_responses(websocket: websockets.WebSocketClientProtocol):\n    \"\"\"Listen for messages (predictions) from the server.\"\"\"\n    global last_alpha_ratio, last_pc1, last_pc2, last_energy\n    try:",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "FILTER_TYPE",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "FILTER_TYPE = FilterTypes.BUTTERWORTH.value\nENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------\n# Async Functions\n# --------------------------------------------------------------------------------\nasync def receive_responses(websocket: websockets.WebSocketClientProtocol):\n    \"\"\"Listen for messages (predictions) from the server.\"\"\"\n    global last_alpha_ratio, last_pc1, last_pc2, last_energy\n    try:\n        async for msg in websocket:",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "ENV_NOISE_TYPE",
+        "kind": 5,
+        "importPath": "board_client",
+        "description": "board_client",
+        "peekOfCode": "ENV_NOISE_TYPE = NoiseTypes.FIFTY.value\n# --------------------------------------------------------------------------------\n# Async Functions\n# --------------------------------------------------------------------------------\nasync def receive_responses(websocket: websockets.WebSocketClientProtocol):\n    \"\"\"Listen for messages (predictions) from the server.\"\"\"\n    global last_alpha_ratio, last_pc1, last_pc2, last_energy\n    try:\n        async for msg in websocket:\n            try:",
+        "detail": "board_client",
+        "documentation": {}
+    },
+    {
+        "label": "GCNNet",
+        "kind": 6,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "class GCNNet(nn.Module):\n    def __init__(self, in_channels, hidden_channels, num_classes):\n        super(GCNNet, self).__init__()\n        self.conv1 = GCNConv(in_channels, hidden_channels)\n        self.conv2 = GCNConv(hidden_channels, hidden_channels)\n        self.lin = nn.Linear(hidden_channels, num_classes)\n    def forward(self, x, edge_index, batch):\n        x = F.relu(self.conv1(x, edge_index))\n        x = F.relu(self.conv2(x, edge_index))\n        x = global_mean_pool(x, batch)",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "load_participant_labels",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def load_participant_labels(ds004504_file, ds003800_file):\n    label_dict = {}\n    group_map_ds004504 = {\"A\": 1, \"C\": 0}\n    df_ds004504 = pd.read_csv(ds004504_file, sep=\"\\t\")\n    df_ds004504 = df_ds004504[df_ds004504['Group'] != 'F']\n    df_ds004504 = df_ds004504[df_ds004504['Group'].isin(group_map_ds004504.keys())]\n    labels_ds004504 = df_ds004504.set_index(\"participant_id\")[\"Group\"].map(group_map_ds004504).to_dict()\n    label_dict.update(labels_ds004504)\n    df_ds003800 = pd.read_csv(ds003800_file, sep=\"\\t\")\n    labels_ds003800 = df_ds003800.set_index(\"participant_id\")[\"Group\"].apply(lambda x: 1).to_dict()",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_band_powers",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def compute_band_powers(data, sfreq):\n    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sfreq, verbose=False)\n    band_powers = {band: np.mean(psd[:, :, (freqs >= fmin) & (freqs <= fmax)], axis=2)\n                   for band, (fmin, fmax) in FREQUENCY_BANDS.items()}\n    return band_powers\ndef compute_shannon_entropy(data):\n    def entropy_fn(x):\n        counts, _ = np.histogram(x, bins=256)\n        p = counts / np.sum(counts)\n        return -np.sum(p * np.log2(p + 1e-12))",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_shannon_entropy",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def compute_shannon_entropy(data):\n    def entropy_fn(x):\n        counts, _ = np.histogram(x, bins=256)\n        p = counts / np.sum(counts)\n        return -np.sum(p * np.log2(p + 1e-12))\n    return np.apply_along_axis(entropy_fn, 1, data)\n@njit\ndef compute_hjorth_parameters_numba(data):\n    n_epochs, n_channels, n_times = data.shape\n    activities = np.empty(n_epochs, dtype=np.float64)",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_hjorth_parameters_numba",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def compute_hjorth_parameters_numba(data):\n    n_epochs, n_channels, n_times = data.shape\n    activities = np.empty(n_epochs, dtype=np.float64)\n    mobilities = np.empty(n_epochs, dtype=np.float64)\n    complexities = np.empty(n_epochs, dtype=np.float64)\n    for i in range(n_epochs):\n        var0 = np.empty(n_channels, dtype=np.float64)\n        for j in range(n_channels):\n            s = 0.0\n            for k in range(n_times):",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "extract_features_epoch",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def extract_features_epoch(epoch_data):\n    \"\"\"Extract features for the handcrafted branch (per epoch).\"\"\"\n    data = epoch_data[np.newaxis, :, :]\n    band_powers = compute_band_powers(data, SAMPLING_RATE)\n    features = [np.mean(band_powers[band]) for band in FREQUENCY_BANDS.keys()]\n    alpha_power = np.mean(band_powers[\"Alpha1\"]) + np.mean(band_powers[\"Alpha2\"])\n    theta_power = np.mean(band_powers[\"Theta1\"]) + np.mean(band_powers[\"Theta2\"])\n    total_power = sum(np.mean(band_powers[band]) for band in FREQUENCY_BANDS.keys()) + 1e-12\n    features.extend([alpha_power/total_power, theta_power/total_power])\n    sh_entropy = np.mean(compute_shannon_entropy(data))",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "extract_channel_features_GNN_epoch",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def extract_channel_features_GNN_epoch(epoch_data, sfreq):\n    \"\"\"\n    Extract features for each channel from an epoch.\n    Returns an array of shape [n_channels, num_bands] where num_bands = len(FREQUENCY_BANDS).\n    \"\"\"\n    n_channels = epoch_data.shape[0]\n    num_bands = len(FREQUENCY_BANDS)\n    features = np.zeros((n_channels, num_bands), dtype=np.float32)\n    for ch in range(n_channels):\n        ts = epoch_data[ch, :]",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "process_subject_combined",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def process_subject_combined(args):\n    file, label = args\n    if not isinstance(file, str):\n        try:\n            file_data = ray.get(file)\n            with tempfile.NamedTemporaryFile(delete=False, suffix=\".set\") as tmp:\n                tmp.write(file_data)\n                tmp.flush()\n                file = tmp.name\n        except Exception as e:",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "run_process_subject_combined",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def run_process_subject_combined(args):\n    return process_subject_combined(args)\n#############################################\n# 4) LOAD COMBINED DATASET USING ray.put() FOR FILES\n#############################################\ndef load_combined_dataset():\n    dataset_paths = [DS004504_PATH, DS003800_PATH]\n    all_files = []\n    for path in dataset_paths:\n        pattern = os.path.join(path, \"**\", \"*_task-Rest_eeg.set\") if 'ds003800' in path else os.path.join(path, \"**\", \"*.set\")",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "load_combined_dataset",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def load_combined_dataset():\n    dataset_paths = [DS004504_PATH, DS003800_PATH]\n    all_files = []\n    for path in dataset_paths:\n        pattern = os.path.join(path, \"**\", \"*_task-Rest_eeg.set\") if 'ds003800' in path else os.path.join(path, \"**\", \"*.set\")\n        files = glob.glob(pattern, recursive=True)\n        all_files.extend(files)\n    tasks = []\n    for f in all_files:\n        subj = os.path.basename(f).split('_')[0]",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_adjacency_matrix",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def compute_adjacency_matrix(ch_names):\n    montage = mne.channels.make_standard_montage('standard_1020')\n    pos_dict = montage.get_positions()['ch_pos']\n    nodes = []\n    for ch in ch_names:\n        if ch in pos_dict:\n            nodes.append(pos_dict[ch])\n    if len(nodes) == 0:\n        return None\n    nodes = np.array(nodes)",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "create_pyg_dataset",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def create_pyg_dataset(X_subjects, y, ch_names_list):\n    pyg_data_list = []\n    for i in range(len(X_subjects)):\n        A = compute_adjacency_matrix(ch_names_list[i])\n        if A is None:\n            print(f\"[WARNING] No valid channels for subject {i+1}.\")\n            continue\n        edge_index = np.array(np.nonzero(A))\n        edge_index = torch.tensor(edge_index, dtype=torch.long)\n        x = torch.tensor(X_subjects[i], dtype=torch.float)",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "visualize_gcn_architecture",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def visualize_gcn_architecture():\n    if not HAS_GRAPHVIZ:\n        print(\"[INFO] Graphviz is not installed. Skipping GCN architecture diagram.\")\n        return\n    dot = Digraph(comment='GCN Architecture')\n    dot.node('A', 'Input Features')\n    dot.node('B', 'Adjacency Matrix\\n(with self-loops)')\n    dot.node('C', 'Aggregation\\n(Message Passing)')\n    dot.node('D', 'Linear Transform\\n(Conv1.lin)')\n    dot.node('E', 'ReLU Activation')",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "train_sgd_logistic_tb",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def train_sgd_logistic_tb(X_train, y_train, X_val, y_val, epochs=200, log_dir=\"./logs/sgd_logreg\"):\n    from sklearn.linear_model import SGDClassifier\n    writer = SummaryWriter(log_dir=log_dir)\n    clf = SGDClassifier(loss=\"modified_huber\", penalty=\"l2\", verbose=1, learning_rate=\"optimal\", random_state=5)\n    classes = np.unique(y_train)\n    train_loss_history = []\n    val_loss_history = []\n    for epoch in range(1, epochs+1):\n        clf.partial_fit(X_train, y_train, classes=classes)\n        y_pred_proba_train = clf.predict_proba(X_train)",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "train_mlp_tb",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def train_mlp_tb(X_train, y_train, X_val, y_val, epochs=200, log_dir=\"./logs/mlp\"):\n    from sklearn.neural_network import MLPClassifier\n    writer = SummaryWriter(log_dir=log_dir)\n    mlp = MLPClassifier(hidden_layer_sizes=(24,14), activation='logistic', solver='adam', max_iter=2, verbose=1, warm_start=False, random_state=5)\n    train_loss_history = []\n    val_loss_history = []\n    for epoch in range(1, epochs+1):\n        mlp.partial_fit(X_train, y_train, classes=np.unique(y_train))\n        y_pred_proba_train = mlp.predict_proba(X_train)\n        train_loss = log_loss(y_train, y_pred_proba_train)",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "visualize_sgd_architecture",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def visualize_sgd_architecture(clf):\n    coef = clf.coef_.flatten()\n    plt.figure(figsize=(10,5))\n    plt.bar(np.arange(len(coef)), coef)\n    plt.xlabel(\"Feature Index\")\n    plt.ylabel(\"Coefficient Value\")\n    plt.title(\"SGD Logistic Regression Coefficients\")\n    plt.tight_layout()\n    plt.savefig(os.path.join(PLOTS_DIR, \"sgd_logreg_coeff.png\"))\n    plt.close()",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "visualize_mlp_architecture",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def visualize_mlp_architecture(mlp):\n    for i, W in enumerate(mlp.coefs_):\n        plt.figure(figsize=(6,4))\n        sns.heatmap(W, annot=False, cmap=\"viridis\")\n        plt.title(f\"MLP Layer {i+1} Weight Matrix\")\n        plt.xlabel(\"Output Nodes\")\n        plt.ylabel(\"Input Nodes\")\n        plt.tight_layout()\n        plt.savefig(os.path.join(PLOTS_DIR, f\"mlp_layer_{i+1}_weights.png\"))\n        plt.close()",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "downstream_classification",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def downstream_classification(CCV, y):\n    from sklearn.model_selection import StratifiedKFold\n    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=5)\n    sgd_acc_list, sgd_auc_list = [], []\n    mlp_acc_list, mlp_auc_list = [], []\n    all_fprs_sgd, all_tprs_sgd = [], []\n    all_fprs_mlp, all_tprs_mlp = [], []\n    sgd_val_losses = []\n    mlp_val_losses = []\n    for fold, (train_idx, test_idx) in enumerate(skf.split(CCV, y), start=1):",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "main",
+        "kind": 2,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "def main():\n    np.random.seed(5)\n    tf.random.set_seed(5)\n    start_time = time.time()\n    # Optionally, visualize the GCN architecture as a flowchart.\n    visualize_gcn_architecture()\n    # Load combined dataset using ray.put() for files.\n    X_handcrafted, y, X_gnn_list, ch_names_list = load_combined_dataset()\n    print(f\"[DEBUG] Handcrafted global features: {X_handcrafted.shape[0]} subjects, {X_handcrafted.shape[1]} features.\")\n    # Create PyG dataset from per-subject GNN features.",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"TF_CPP_MIN_LOG_LEVEL\"]",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "os.environ[\"TF_CPP_MIN_LOG_LEVEL\"] = \"3\"\n#############################################\n# CONFIGURATION (Update paths as needed)\n#############################################\nDS004504_PATH = \"/Users/ishaangubbala/Documents/SF/ds004504/derivatives\"\nDS003800_PATH = \"/Users/ishaangubbala/Documents/SF/ds003800/\"\nPARTICIPANTS_FILE_DS004504 = \"/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv\"\nPARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "DS004504_PATH",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "DS004504_PATH = \"/Users/ishaangubbala/Documents/SF/ds004504/derivatives\"\nDS003800_PATH = \"/Users/ishaangubbala/Documents/SF/ds003800/\"\nPARTICIPANTS_FILE_DS004504 = \"/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv\"\nPARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "DS003800_PATH",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "DS003800_PATH = \"/Users/ishaangubbala/Documents/SF/ds003800/\"\nPARTICIPANTS_FILE_DS004504 = \"/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv\"\nPARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "PARTICIPANTS_FILE_DS004504",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "PARTICIPANTS_FILE_DS004504 = \"/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv\"\nPARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}\nFEATURE_ANALYSIS_DIR = \"feature_analysis\"",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "PARTICIPANTS_FILE_DS003800",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "PARTICIPANTS_FILE_DS003800 = \"/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv\"\nSAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}\nFEATURE_ANALYSIS_DIR = \"feature_analysis\"\nMODELS_DIR = \"trained_models\"",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "SAMPLING_RATE",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "SAMPLING_RATE = 256  # Hz\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}\nFEATURE_ANALYSIS_DIR = \"feature_analysis\"\nMODELS_DIR = \"trained_models\"\nPLOTS_DIR = \"plots\"",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "FREQUENCY_BANDS",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "FREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4), \"Theta1\": (4, 6), \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10), \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20), \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40), \"Gamma2\": (40, 50)\n}\nFEATURE_ANALYSIS_DIR = \"feature_analysis\"\nMODELS_DIR = \"trained_models\"\nPLOTS_DIR = \"plots\"\nLOG_DIR = \"./logs\"",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "FEATURE_ANALYSIS_DIR",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "FEATURE_ANALYSIS_DIR = \"feature_analysis\"\nMODELS_DIR = \"trained_models\"\nPLOTS_DIR = \"plots\"\nLOG_DIR = \"./logs\"\nfor d in [FEATURE_ANALYSIS_DIR, MODELS_DIR, PLOTS_DIR, LOG_DIR]:\n    os.makedirs(d, exist_ok=True)\n#############################################\n# 1) LOAD PARTICIPANT LABELS\n#############################################\ndef load_participant_labels(ds004504_file, ds003800_file):",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "MODELS_DIR",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "MODELS_DIR = \"trained_models\"\nPLOTS_DIR = \"plots\"\nLOG_DIR = \"./logs\"\nfor d in [FEATURE_ANALYSIS_DIR, MODELS_DIR, PLOTS_DIR, LOG_DIR]:\n    os.makedirs(d, exist_ok=True)\n#############################################\n# 1) LOAD PARTICIPANT LABELS\n#############################################\ndef load_participant_labels(ds004504_file, ds003800_file):\n    label_dict = {}",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "PLOTS_DIR",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "PLOTS_DIR = \"plots\"\nLOG_DIR = \"./logs\"\nfor d in [FEATURE_ANALYSIS_DIR, MODELS_DIR, PLOTS_DIR, LOG_DIR]:\n    os.makedirs(d, exist_ok=True)\n#############################################\n# 1) LOAD PARTICIPANT LABELS\n#############################################\ndef load_participant_labels(ds004504_file, ds003800_file):\n    label_dict = {}\n    group_map_ds004504 = {\"A\": 1, \"C\": 0}",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "LOG_DIR",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "LOG_DIR = \"./logs\"\nfor d in [FEATURE_ANALYSIS_DIR, MODELS_DIR, PLOTS_DIR, LOG_DIR]:\n    os.makedirs(d, exist_ok=True)\n#############################################\n# 1) LOAD PARTICIPANT LABELS\n#############################################\ndef load_participant_labels(ds004504_file, ds003800_file):\n    label_dict = {}\n    group_map_ds004504 = {\"A\": 1, \"C\": 0}\n    df_ds004504 = pd.read_csv(ds004504_file, sep=\"\\t\")",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "participant_labels",
+        "kind": 5,
+        "importPath": "process_server",
+        "description": "process_server",
+        "peekOfCode": "participant_labels = load_participant_labels(PARTICIPANTS_FILE_DS004504, PARTICIPANTS_FILE_DS003800)\n#############################################\n# 2) HANDCRAFTED FEATURE EXTRACTION FUNCTIONS\n#############################################\ndef compute_band_powers(data, sfreq):\n    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sfreq, verbose=False)\n    band_powers = {band: np.mean(psd[:, :, (freqs >= fmin) & (freqs <= fmax)], axis=2)\n                   for band, (fmin, fmax) in FREQUENCY_BANDS.items()}\n    return band_powers\ndef compute_shannon_entropy(data):",
+        "detail": "process_server",
+        "documentation": {}
+    },
+    {
+        "label": "PositionalEncoding",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class PositionalEncoding(Layer):\n    def __init__(self, maxlen, d_model):\n        \"\"\"\n        Positional Encoding Layer\n        Args:\n            maxlen: Maximum sequence length.\n            d_model: Dimensionality of embeddings.\n        \"\"\"\n        super(PositionalEncoding, self).__init__()\n        self.pos_encoding = self.positional_encoding(maxlen, d_model)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "EEGSample",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class EEGSample(BaseModel):\n    channels: List[float]\nclass EEGData(BaseModel):\n    data: List[EEGSample]\nclass PredictionResponse(BaseModel):\n    prediction: int\n    confidence: float\n    features: Dict[str, float]\n    stats: Dict[str, Dict[str, float]]\n    pc1: float",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "EEGData",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class EEGData(BaseModel):\n    data: List[EEGSample]\nclass PredictionResponse(BaseModel):\n    prediction: int\n    confidence: float\n    features: Dict[str, float]\n    stats: Dict[str, Dict[str, float]]\n    pc1: float\n    pc2: float\n    energy: float",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "PredictionResponse",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class PredictionResponse(BaseModel):\n    prediction: int\n    confidence: float\n    features: Dict[str, float]\n    stats: Dict[str, Dict[str, float]]\n    pc1: float\n    pc2: float\n    energy: float\nclass EnergyLandscape(BaseModel):\n    x: List[List[float]]",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "EnergyLandscape",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class EnergyLandscape(BaseModel):\n    x: List[List[float]]\n    y: List[List[float]]\n    z: List[List[float]]\n# ------------------ FASTAPI APPLICATION -------------------------------------\napp = FastAPI(\n    title=\"Continuous EEG Prediction Server with Energy Landscape\",\n    description=\"Streams EEG predictions and sends a 3D energy landscape to clients.\",\n    version=\"1.0.0\"\n)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "ConnectionManager",
+        "kind": 6,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "class ConnectionManager:\n    \"\"\"\n    Manages client connections, buffering data for each connection,\n    and sends predictions back to the client.\n    \"\"\"\n    def __init__(self):\n        self.active_connections: List[WebSocket] = []\n        self.buffers: Dict[WebSocket, deque] = {}\n        self.lock = asyncio.Lock()\n        # Store our precomputed grid data so we don't compute it repeatedly",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_band_powers",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def compute_band_powers(data: np.ndarray, sfreq: float) -> Dict[str, float]:\n    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sfreq, verbose=False)\n    band_powers = {}\n    for band, (fmin, fmax) in FREQUENCY_BANDS.items():\n        idx_band = (freqs >= fmin) & (freqs <= fmax)\n        # Mean over channels and frequencies\n        band_powers[band] = np.mean(psd[:, idx_band], axis=1).mean()\n    return band_powers\ndef compute_shannon_entropy(data: np.ndarray) -> float:\n    flattened = data.flatten()",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_shannon_entropy",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def compute_shannon_entropy(data: np.ndarray) -> float:\n    flattened = data.flatten()\n    counts, _ = np.histogram(flattened, bins=256, density=True)\n    probs = counts / np.sum(counts)\n    entropy_val = -np.sum(probs * np.log2(probs + 1e-12))\n    return entropy_val\ndef compute_hjorth_parameters(data: np.ndarray) -> Dict[str, float]:\n    activity = np.var(data) + 1e-12\n    first_derivative = np.diff(data, axis=-1)\n    mobility = np.sqrt(np.var(first_derivative) / activity)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_hjorth_parameters",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def compute_hjorth_parameters(data: np.ndarray) -> Dict[str, float]:\n    activity = np.var(data) + 1e-12\n    first_derivative = np.diff(data, axis=-1)\n    mobility = np.sqrt(np.var(first_derivative) / activity)\n    second_derivative = np.diff(first_derivative, axis=-1)\n    complexity = np.sqrt(np.var(second_derivative) / (np.var(first_derivative) + 1e-12))\n    return {\n        \"Hjorth_Activity\": float(activity),\n        \"Hjorth_Mobility\": float(mobility),\n        \"Hjorth_Complexity\": float(complexity)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "extract_features",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def extract_features(data: np.ndarray) -> Dict[str, Any]:\n    band_powers = compute_band_powers(data, SAMPLING_RATE)\n    alpha_power = band_powers.get(\"Alpha1\", 0.0) + band_powers.get(\"Alpha2\", 0.0)\n    theta_power = band_powers.get(\"Theta1\", 0.0) + band_powers.get(\"Theta2\", 0.0)\n    total_power = sum(band_powers.values()) + 1e-12\n    alpha_ratio = alpha_power / total_power\n    theta_ratio = theta_power / total_power\n    shannon_entropy = compute_shannon_entropy(data)\n    hjorth_params = compute_hjorth_parameters(data)\n    features = {band: band_powers.get(band, 0.0) for band in FREQUENCY_BANDS.keys()}",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_feature_stats",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def compute_feature_stats(features: Dict[str, float]) -> Dict[str, Dict[str, float]]:\n    stats = {}\n    for k, v in features.items():\n        stats[k] = {\n            \"mean\": v,\n            \"std\": 0.0\n        }\n    return stats\n# ------------------ ENERGY LANDSCAPE ----------------------------------------\ndef compute_energy_weights(features: List[str]) -> Dict[str, float]:",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_energy_weights",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def compute_energy_weights(features: List[str]) -> Dict[str, float]:\n    # Assign weight=1.0 for every feature\n    return {f: 1.0 for f in features}\ndef compute_energy(features: Dict[str, float], weights: Dict[str, float]) -> float:\n    val = 0.0\n    for k, w in weights.items():\n        val += features.get(k, 0.0) * w\n    return val\ndef load_or_fit_pca(features: np.ndarray, n_components: int = 2) -> PCA:\n    \"\"\"",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "compute_energy",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def compute_energy(features: Dict[str, float], weights: Dict[str, float]) -> float:\n    val = 0.0\n    for k, w in weights.items():\n        val += features.get(k, 0.0) * w\n    return val\ndef load_or_fit_pca(features: np.ndarray, n_components: int = 2) -> PCA:\n    \"\"\"\n    Attempts to load an existing PCA model; if none is found, it fits a new one.\n    \"\"\"\n    if os.path.exists(PCA_MODEL_PATH):",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "load_or_fit_pca",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def load_or_fit_pca(features: np.ndarray, n_components: int = 2) -> PCA:\n    \"\"\"\n    Attempts to load an existing PCA model; if none is found, it fits a new one.\n    \"\"\"\n    if os.path.exists(PCA_MODEL_PATH):\n        pca_model = joblib.load(PCA_MODEL_PATH)\n        print(\"[INFO] Loaded existing PCA model.\")\n    else:\n        pca_model = PCA(n_components=n_components)\n        pca_model.fit(features)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "generate_energy_landscape_grid",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def generate_energy_landscape_grid(pca: PCA, principal_components: np.ndarray, energy_vals: np.ndarray) -> Dict[str, Any]:\n    \"\"\"\n    Generates grid data for the 2D PCA + energy landscape.\n    \"\"\"\n    x_min, x_max = principal_components[:,0].min() - ENERGY_RANGE, principal_components[:,0].max() + ENERGY_RANGE\n    y_min, y_max = principal_components[:,1].min() - ENERGY_RANGE, principal_components[:,1].max() + ENERGY_RANGE\n    xi = np.linspace(x_min, x_max, GRID_RESOLUTION)\n    yi = np.linspace(y_min, y_max, GRID_RESOLUTION)\n    xi, yi = np.meshgrid(xi, yi)\n    zi = griddata(principal_components, energy_vals, (xi, yi), method='cubic')",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "load_training_features",
+        "kind": 2,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "def load_training_features() -> np.ndarray:\n    \"\"\"\n    In your real scenario, load actual training features from a file.\n    For demonstration, we just generate random data here.\n    \"\"\"\n    np.random.seed(42)\n    sim_data = np.random.rand(1000, len(FEATURE_NAMES))\n    return sim_data\ntraining_features = load_training_features()\npca = load_or_fit_pca(training_features, n_components=2)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "os.environ[\"TF_CPP_MIN_LOG_LEVEL\"]",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "os.environ[\"TF_CPP_MIN_LOG_LEVEL\"] = \"3\"  # Suppress TensorFlow warnings if any\n# Frequency bands (unchanged from your original)\nFREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4),\n    \"Theta1\": (4, 6),\n    \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10),\n    \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20),\n    \"Beta2\": (20, 30),",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "FREQUENCY_BANDS",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "FREQUENCY_BANDS = {\n    \"Delta\": (0.5, 4),\n    \"Theta1\": (4, 6),\n    \"Theta2\": (6, 8),\n    \"Alpha1\": (8, 10),\n    \"Alpha2\": (10, 12),\n    \"Beta1\": (12, 20),\n    \"Beta2\": (20, 30),\n    \"Gamma1\": (30, 40),\n    \"Gamma2\": (40, 50),",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "FEATURE_NAMES",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "FEATURE_NAMES = list(FREQUENCY_BANDS.keys()) + [\n    \"Alpha_Ratio\", \"Theta_Ratio\",\n    \"Shannon_Entropy\",\n    \"Hjorth_Activity\", \"Hjorth_Mobility\", \"Hjorth_Complexity\",\n    \"Transformer_Output\"\n]\n# Paths\nMODELS_DIR = \"trained_models\"\nMLP_MODEL_PATH = os.path.join(MODELS_DIR, \"mlp_fold_3.keras\")  # Updated to .keras\nMLP_SCALER_PATH = os.path.join(MODELS_DIR, \"mlp_scaler_fold_3.joblib\")",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "MODELS_DIR",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "MODELS_DIR = \"trained_models\"\nMLP_MODEL_PATH = os.path.join(MODELS_DIR, \"mlp_fold_3.keras\")  # Updated to .keras\nMLP_SCALER_PATH = os.path.join(MODELS_DIR, \"mlp_scaler_fold_3.joblib\")\nPCA_MODEL_PATH = os.path.join(MODELS_DIR, \"pca_model.joblib\")\nTRANSFORMER_MODEL_PATH = os.path.join(MODELS_DIR, \"transformer_model.keras\")  # Transformer model path\n# EEG streaming config\nSAMPLING_RATE = 256\nWINDOW_SIZE = 20\nWINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE\n# Energy landscape config",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "MLP_MODEL_PATH",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "MLP_MODEL_PATH = os.path.join(MODELS_DIR, \"mlp_fold_3.keras\")  # Updated to .keras\nMLP_SCALER_PATH = os.path.join(MODELS_DIR, \"mlp_scaler_fold_3.joblib\")\nPCA_MODEL_PATH = os.path.join(MODELS_DIR, \"pca_model.joblib\")\nTRANSFORMER_MODEL_PATH = os.path.join(MODELS_DIR, \"transformer_model.keras\")  # Transformer model path\n# EEG streaming config\nSAMPLING_RATE = 256\nWINDOW_SIZE = 20\nWINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE\n# Energy landscape config\nGRID_RESOLUTION = 50",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "MLP_SCALER_PATH",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "MLP_SCALER_PATH = os.path.join(MODELS_DIR, \"mlp_scaler_fold_3.joblib\")\nPCA_MODEL_PATH = os.path.join(MODELS_DIR, \"pca_model.joblib\")\nTRANSFORMER_MODEL_PATH = os.path.join(MODELS_DIR, \"transformer_model.keras\")  # Transformer model path\n# EEG streaming config\nSAMPLING_RATE = 256\nWINDOW_SIZE = 20\nWINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE\n# Energy landscape config\nGRID_RESOLUTION = 50\nENERGY_RANGE = 1.0",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "PCA_MODEL_PATH",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "PCA_MODEL_PATH = os.path.join(MODELS_DIR, \"pca_model.joblib\")\nTRANSFORMER_MODEL_PATH = os.path.join(MODELS_DIR, \"transformer_model.keras\")  # Transformer model path\n# EEG streaming config\nSAMPLING_RATE = 256\nWINDOW_SIZE = 20\nWINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE\n# Energy landscape config\nGRID_RESOLUTION = 50\nENERGY_RANGE = 1.0\n# ------------------ CUSTOM LAYER DEFINITION ----------------------------------",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "TRANSFORMER_MODEL_PATH",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "TRANSFORMER_MODEL_PATH = os.path.join(MODELS_DIR, \"transformer_model.keras\")  # Transformer model path\n# EEG streaming config\nSAMPLING_RATE = 256\nWINDOW_SIZE = 20\nWINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE\n# Energy landscape config\nGRID_RESOLUTION = 50\nENERGY_RANGE = 1.0\n# ------------------ CUSTOM LAYER DEFINITION ----------------------------------\n@register_keras_serializable()",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "SAMPLING_RATE",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "SAMPLING_RATE = 256\nWINDOW_SIZE = 20\nWINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE\n# Energy landscape config\nGRID_RESOLUTION = 50\nENERGY_RANGE = 1.0\n# ------------------ CUSTOM LAYER DEFINITION ----------------------------------\n@register_keras_serializable()\nclass PositionalEncoding(Layer):\n    def __init__(self, maxlen, d_model):",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "WINDOW_SIZE",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "WINDOW_SIZE = 20\nWINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE\n# Energy landscape config\nGRID_RESOLUTION = 50\nENERGY_RANGE = 1.0\n# ------------------ CUSTOM LAYER DEFINITION ----------------------------------\n@register_keras_serializable()\nclass PositionalEncoding(Layer):\n    def __init__(self, maxlen, d_model):\n        \"\"\"",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "WINDOW_SAMPLES",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "WINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE\n# Energy landscape config\nGRID_RESOLUTION = 50\nENERGY_RANGE = 1.0\n# ------------------ CUSTOM LAYER DEFINITION ----------------------------------\n@register_keras_serializable()\nclass PositionalEncoding(Layer):\n    def __init__(self, maxlen, d_model):\n        \"\"\"\n        Positional Encoding Layer",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "GRID_RESOLUTION",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "GRID_RESOLUTION = 50\nENERGY_RANGE = 1.0\n# ------------------ CUSTOM LAYER DEFINITION ----------------------------------\n@register_keras_serializable()\nclass PositionalEncoding(Layer):\n    def __init__(self, maxlen, d_model):\n        \"\"\"\n        Positional Encoding Layer\n        Args:\n            maxlen: Maximum sequence length.",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "ENERGY_RANGE",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "ENERGY_RANGE = 1.0\n# ------------------ CUSTOM LAYER DEFINITION ----------------------------------\n@register_keras_serializable()\nclass PositionalEncoding(Layer):\n    def __init__(self, maxlen, d_model):\n        \"\"\"\n        Positional Encoding Layer\n        Args:\n            maxlen: Maximum sequence length.\n            d_model: Dimensionality of embeddings.",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "app",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "app = FastAPI(\n    title=\"Continuous EEG Prediction Server with Energy Landscape\",\n    description=\"Streams EEG predictions and sends a 3D energy landscape to clients.\",\n    version=\"1.0.0\"\n)\n# CORS - allowing all for demonstration\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=[\"*\"],\n    allow_credentials=True,",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "transformer_lock",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "transformer_lock = asyncio.Lock()\n# For PCA, we simulate or load training features to either load or fit PCA\ndef load_training_features() -> np.ndarray:\n    \"\"\"\n    In your real scenario, load actual training features from a file.\n    For demonstration, we just generate random data here.\n    \"\"\"\n    np.random.seed(42)\n    sim_data = np.random.rand(1000, len(FEATURE_NAMES))\n    return sim_data",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "training_features",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "training_features = load_training_features()\npca = load_or_fit_pca(training_features, n_components=2)\nweights = compute_energy_weights(FEATURE_NAMES)\n# Generate \"training_energy\" for precomputed energy landscape\ntraining_energy = []\nfor row in training_features:\n    ft_dict = {FEATURE_NAMES[i]: row[i] for i in range(len(FEATURE_NAMES))}\n    e_val = compute_energy(ft_dict, weights)\n    training_energy.append(e_val)\ntraining_energy = np.array(training_energy)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "pca",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "pca = load_or_fit_pca(training_features, n_components=2)\nweights = compute_energy_weights(FEATURE_NAMES)\n# Generate \"training_energy\" for precomputed energy landscape\ntraining_energy = []\nfor row in training_features:\n    ft_dict = {FEATURE_NAMES[i]: row[i] for i in range(len(FEATURE_NAMES))}\n    e_val = compute_energy(ft_dict, weights)\n    training_energy.append(e_val)\ntraining_energy = np.array(training_energy)\npc_data = pca.transform(training_features)",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "weights",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "weights = compute_energy_weights(FEATURE_NAMES)\n# Generate \"training_energy\" for precomputed energy landscape\ntraining_energy = []\nfor row in training_features:\n    ft_dict = {FEATURE_NAMES[i]: row[i] for i in range(len(FEATURE_NAMES))}\n    e_val = compute_energy(ft_dict, weights)\n    training_energy.append(e_val)\ntraining_energy = np.array(training_energy)\npc_data = pca.transform(training_features)\n# Pre-generate the 2D grid for the energy landscape",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "training_energy",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "training_energy = []\nfor row in training_features:\n    ft_dict = {FEATURE_NAMES[i]: row[i] for i in range(len(FEATURE_NAMES))}\n    e_val = compute_energy(ft_dict, weights)\n    training_energy.append(e_val)\ntraining_energy = np.array(training_energy)\npc_data = pca.transform(training_features)\n# Pre-generate the 2D grid for the energy landscape\nenergy_landscape_data = generate_energy_landscape_grid(pca, pc_data, training_energy)\n# ------------------ CONNECTION MANAGER --------------------------------------",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "training_energy",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "training_energy = np.array(training_energy)\npc_data = pca.transform(training_features)\n# Pre-generate the 2D grid for the energy landscape\nenergy_landscape_data = generate_energy_landscape_grid(pca, pc_data, training_energy)\n# ------------------ CONNECTION MANAGER --------------------------------------\nclass ConnectionManager:\n    \"\"\"\n    Manages client connections, buffering data for each connection,\n    and sends predictions back to the client.\n    \"\"\"",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "pc_data",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "pc_data = pca.transform(training_features)\n# Pre-generate the 2D grid for the energy landscape\nenergy_landscape_data = generate_energy_landscape_grid(pca, pc_data, training_energy)\n# ------------------ CONNECTION MANAGER --------------------------------------\nclass ConnectionManager:\n    \"\"\"\n    Manages client connections, buffering data for each connection,\n    and sends predictions back to the client.\n    \"\"\"\n    def __init__(self):",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "energy_landscape_data",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "energy_landscape_data = generate_energy_landscape_grid(pca, pc_data, training_energy)\n# ------------------ CONNECTION MANAGER --------------------------------------\nclass ConnectionManager:\n    \"\"\"\n    Manages client connections, buffering data for each connection,\n    and sends predictions back to the client.\n    \"\"\"\n    def __init__(self):\n        self.active_connections: List[WebSocket] = []\n        self.buffers: Dict[WebSocket, deque] = {}",
+        "detail": "server",
+        "documentation": {}
+    },
+    {
+        "label": "manager",
+        "kind": 5,
+        "importPath": "server",
+        "description": "server",
+        "peekOfCode": "manager = ConnectionManager()\n# ------------------ WEBSOCKET ENDPOINT --------------------------------------\n@app.websocket(\"/ws\")\nasync def websocket_endpoint(websocket: WebSocket):\n    \"\"\"\n    WebSocket endpoint that continually listens for EEG data,\n    processes it, and sends back predictions.\n    \"\"\"\n    await manager.connect(websocket)\n    try:",
+        "detail": "server",
+        "documentation": {}
+    }
+]
