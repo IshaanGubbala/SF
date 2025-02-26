@@ -106,7 +106,8 @@ The MLP model serves as a baseline classifier. It is implemented using scikit-le
 - **Training Approach**: Partial fit to accommodate incremental learning.
 
 
-QSup: Quantum Superposition-Inspired Neural Network
+### QSup: Quantum Superposition-Inspired Neural Network
+
 QSup is an innovative neural network architecture that integrates principles from quantum mechanics, specifically the concept of superposition, into traditional artificial intelligence models. This approach enables the network to evaluate multiple hypotheses concurrently, enhancing its ability to handle uncertainty and recognize complex patterns.
 
 Table of Contents
@@ -136,32 +137,32 @@ QSup introduces a novel approach to artificial intelligence by emulating quantum
 How QSup Works
 QSup operates through a series of steps that mirror quantum mechanical principles:
 
-1. Input Representation
+1. **Input Representation**
 Wave Guesses: For each input, QSup generates multiple "wave guesses," each offering a different perspective by incorporating both real and imaginary components.
-2. Superposition Formation
+2. **Superposition Formation**
 Combination: These wave guesses are combined into a single superposed state, encapsulating all potential interpretations of the input.
-3. Measurement and Collapse
+3. **Measurement and Collapse**
 Evaluation: Upon processing, the superposed state is measured, causing a "collapse" into a definitive output based on the probabilities derived from the combined wave guesses.
-4. Learning and Adjustment
+4. **Learning and Adjustment**
 Optimization: The network adjusts its parameters to improve the accuracy of future predictions, refining the generation and combination of wave guesses.
 Mathematical Formulation
 To provide a concrete understanding, let's delve into the mathematical underpinnings of QSup:
 
-1. Input Representation
+1. **Input Representation**
 Each input ( x ) is transformed into a complex-valued vector ( \psi(x) ), where:
 
-[ \psi(x) = \sum_{i} \alpha_i(x) + i\beta_i(x) ]
+$\psi(x) = \sum_{i} \alpha_i(x) + i\beta_i(x) ]/$
 
-Here, ( \alpha_i(x) ) and ( \beta_i(x) ) represent the real and imaginary components of the input transformation, respectively.
+Here, ( $\alpha_i(x)$ ) and ( $\beta_i(x)$ ) represent the real and imaginary components of the input transformation, respectively.
 
 2. Superposition Formation
 The network processes the input through layers of complex-valued weights ( W ) and biases ( b ):
 
-[ z = W \psi(x) + b ]
+[ z = W $\psi(x)$ + b ]
 
 An activation function ( f ) (e.g., a complex variant of ReLU) is applied:
 
-[ \psi' = f(z) ]
+[ $\psi'$ = f(z) ]
 
 This results in a superposed state ( \psi' ) that combines multiple interpretations of the input.
 
