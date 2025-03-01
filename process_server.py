@@ -60,9 +60,9 @@ for d in [BASE_OUTPUT_DIR, HANDCRAFTED_DIR, GNN_DIR, CHANNELS_DIR]:
 def load_participant_labels(ds004504_file, ds003800_file):
     label_dict = {}
     # Only include groups "A" and "C"
-    group_map_ds004504 = {"A": 1, "C": 0}
+    group_map_ds004504 = {"A": 1, "C": 0, "F": 1}
     df_ds004504 = pd.read_csv(ds004504_file, sep="\t")
-    df_ds004504 = df_ds004504[df_ds004504['Group'] != 'F']
+    #df_ds004504 = df_ds004504[df_ds004504['Group'] != 'F']
     df_ds004504 = df_ds004504[df_ds004504['Group'].isin(group_map_ds004504.keys())]
     labels_ds004504 = df_ds004504.set_index("participant_id")["Group"].map(group_map_ds004504).to_dict()
     label_dict.update(labels_ds004504)
