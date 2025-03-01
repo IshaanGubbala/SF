@@ -10,7 +10,7 @@ This project provides a comprehensive pipeline for training and evaluating machi
 - [Usage](#usage)
 - [Model Architectures](#model-architectures)
   - [Multi-Layer Perceptron (MLP)](#multi-layer-perceptron-mlp)
-  - [QSupFullNet](#qsupfullnet)
+  - [QSup: Quantum Superposition-Inspired Neural Network](#qsup-quantum-superposition-inspired-neural-network)
 - [Training and Evaluation](#training-and-evaluation)
 - [Results](#results)
 - [Contributing](#contributing)
@@ -105,112 +105,96 @@ The MLP model serves as a baseline classifier. It is implemented using scikit-le
 - **Regularization (Alpha)**: 0.275.
 - **Training Approach**: Partial fit to accommodate incremental learning.
 
+### QSup: Quantum Superposition-Inspired Neural Network
 
-QSup: Quantum Superposition-Inspired Neural Network
 QSup is an innovative neural network architecture that integrates principles from quantum mechanics, specifically the concept of superposition, into traditional artificial intelligence models. This approach enables the network to evaluate multiple hypotheses concurrently, enhancing its ability to handle uncertainty and recognize complex patterns.
 
-Table of Contents
-Introduction
-How QSup Works
-1. Input Representation
-2. Superposition Formation
-3. Measurement and Collapse
-4. Learning and Adjustment
-Mathematical Formulation
-1. Input Representation
-2. Superposition Formation
-3. Measurement and Collapse
-4. Learning and Adjustment
-Hyperparameters and Tuning
-Key Hyperparameters
-Tuning Methods
-Installation
-Usage
-Contributing
-License
-Contact
-Acknowledgements
-Introduction
-QSup introduces a novel approach to artificial intelligence by emulating quantum superposition within neural networks. By maintaining and processing multiple potential solutions simultaneously, QSup enhances decision-making processes, particularly in environments characterized by uncertainty and complex pattern recognition.
+#### How QSup Works
 
-How QSup Works
 QSup operates through a series of steps that mirror quantum mechanical principles:
 
-1. Input Representation
-Wave Guesses: For each input, QSup generates multiple "wave guesses," each offering a different perspective by incorporating both real and imaginary components.
-2. Superposition Formation
-Combination: These wave guesses are combined into a single superposed state, encapsulating all potential interpretations of the input.
-3. Measurement and Collapse
-Evaluation: Upon processing, the superposed state is measured, causing a "collapse" into a definitive output based on the probabilities derived from the combined wave guesses.
-4. Learning and Adjustment
-Optimization: The network adjusts its parameters to improve the accuracy of future predictions, refining the generation and combination of wave guesses.
-Mathematical Formulation
+1. **Input Representation**
+
+   *Wave Guesses*: For each input, QSup generates multiple "wave guesses," each offering a different perspective by incorporating both real and imaginary components.
+
+2. **Superposition Formation**
+
+   *Combination*: These wave guesses are combined into a single superposed state, encapsulating all potential interpretations of the input.
+
+3. **Measurement and Collapse**
+
+   *Evaluation*: Upon processing, the superposed state is measured, causing a "collapse" into a definitive output based on the probabilities derived from the combined wave guesses.
+
+4. **Learning and Adjustment**
+
+   *Optimization*: The network adjusts its parameters to improve the accuracy of future predictions, refining the generation and combination of wave guesses.
+
+#### Mathematical Formulation
+
 To provide a concrete understanding, let's delve into the mathematical underpinnings of QSup:
 
-1. Input Representation
-Each input ( x ) is transformed into a complex-valued vector ( \psi(x) ), where:
+1. **Input Representation**
 
-[ \psi(x) = \sum_{i} \alpha_i(x) + i\beta_i(x) ]
+   Each input $\( x \)$ is transformed into a complex-valued vector $\( \psi(x) \)$, where:
 
-Here, ( \alpha_i(x) ) and ( \beta_i(x) ) represent the real and imaginary components of the input transformation, respectively.
+   $$\psi(x) = \sum_{i} \alpha_i(x) + i\,\beta_i(x)$$
 
-2. Superposition Formation
-The network processes the input through layers of complex-valued weights ( W ) and biases ( b ):
+   Here, $\( \alpha_i(x) \)$ and $\( \beta_i(x) \)$ represent the real and imaginary components of the input transformation, respectively.
 
-[ z = W \psi(x) + b ]
+2. **Superposition Formation**
 
-An activation function ( f ) (e.g., a complex variant of ReLU) is applied:
+   The network processes the input through layers of complex-valued weights $\( W \)$ and biases $\( b \)$:
 
-[ \psi' = f(z) ]
+   $$z = W\,\psi(x) + b$$
 
-This results in a superposed state ( \psi' ) that combines multiple interpretations of the input.
+   An activation function $\( f \)$ (e.g., a complex variant of ReLU) is applied:
 
-3. Measurement and Collapse
-The final output is obtained by measuring the probability distribution ( P(y|x) ):
+   $$\psi' = f(z)$$
 
-[ P(y|x) = \frac{|\langle \phi_y | \psi' \rangle|^2}{\sum_{y'} |\langle \phi_{y'} | \psi' \rangle|^2} ]
+   This results in a superposed state $\( \psi' \)$ that combines multiple interpretations of the input.
 
-where ( \phi_y ) denotes the basis state corresponding to output ( y ).
+3. **Measurement and Collapse**
 
-4. Learning and Adjustment
-The network's parameters are optimized by minimizing a loss function ( \mathcal{L} ), such as the cross-entropy between the predicted and true distributions:
+   The final output is obtained by measuring the probability distribution $\( P(y\mid x) \)$:
 
-[ \mathcal{L} = -\sum_{x} \sum_{y} P_{\text{true}}(y|x) \log P(y|x) ]
+   $$P(y\mid x) = \frac{|\langle \phi_y \mid \psi' \rangle|^2}{\sum_{y'} |\langle \phi_{y'} \mid \psi' \rangle|^2}$$
 
-Gradient-based optimization techniques are employed to update the parameters:
+   where $\( \phi_y \)$ denotes the basis state corresponding to output $\( y \)$.
 
-[ W \leftarrow W - \eta \frac{\partial \mathcal{L}}{\partial W} ]
+4. **Learning and Adjustment**
 
-where ( \eta ) is the learning rate.
+   The network's parameters are optimized by minimizing a loss function $\( \mathcal{L} \)$, such as the cross-entropy between the predicted and true distributions:
 
-Hyperparameters and Tuning
+   $$\mathcal{L} = -\sum_{x} \sum_{y} P_{\text{true}}(y\mid x) \log P(y\mid x)$$
+
+   Gradient-based optimization techniques are employed to update the parameters:
+
+   $$W \leftarrow W - \eta\,\frac{\partial \mathcal{L}}{\partial W}$$
+
+   where $\( \eta \)$ is the learning rate.
+
+#### Hyperparameters and Tuning
+
 Hyperparameters in QSup are critical as they govern the behavior and performance of the network.
 
-Key Hyperparameters
-Number of Wave Guesses (( N )): Determines how many potential interpretations are considered simultaneously.
+- **Number of Wave Guesses $(\( N \))$**: Determines how many potential interpretations are considered simultaneously.  
+  *Tuning*: A higher $\( N \)$ may capture more complexity but increases computational load.
 
-Tuning: A higher ( N ) may capture more complexity but increases computational load.
-Learning Rate (( \eta )): Controls the speed at which the network updates its parameters during training.
+- **Learning Rate $(\( \eta \))$**: Controls the speed at which the network updates its parameters during training.  
+  *Tuning*: A balance is necessary; too high can lead to instability, too low can slow convergence.
 
-Tuning: A balance is necessary; too high can lead to instability, too low can slow convergence.
-Superposition Depth (( D )): Defines the number of layers through which wave guesses are combined before measurement.
+- **Superposition Depth $(\( D \))$**: Defines the number of layers through which wave guesses are combined before measurement.  
+  *Tuning*: Greater depth can model more complex relationships but may also introduce overfitting.
 
-Tuning: Greater depth can model more complex relationships but may also introduce overfitting.
-Regularization Parameters (( \lambda )): Prevent overfitting by penalizing overly complex models.
+- **Regularization Parameters $(\( \lambda \))$**: Prevent overfitting by penalizing overly complex models.  
+  *Tuning*: Adjusting $\( \lambda \)$ helps maintain a balance between model complexity and generalization.
 
-Tuning: Adjusting ( \lambda ) helps maintain a balance between model complexity and generalization.
-Tuning Methods
-Effective hyperparameter tuning is essential for optimal performance. Common strategies include:
+*Common Tuning Methods*:
 
-Grid Search: Explores a predefined set of hyperparameter values exhaustively to identify the best combination.
-
-Random Search: Samples hyperparameter combinations randomly, which can be more efficient in high-dimensional spaces.
-
-Bayesian Optimization: Utilizes probabilistic models to predict promising hyperparameter settings based on past evaluations.
-
-Early Stopping: Monitors performance on a validation set and halts training when improvements plateau, preventing overfitting.
-
-Implementing these tuning methods involves iterative experimentation and validation to discover the hyperparameter configurations that yield the best performance for the specific application of QSup.
+- **Grid Search**: Explores a predefined set of hyperparameter values exhaustively.
+- **Random Search**: Samples hyperparameter combinations randomly.
+- **Bayesian Optimization**: Uses probabilistic models to predict promising hyperparameter settings.
+- **Early Stopping**: Monitors performance on a validation set and halts training when improvements plateau.
 
 ## Training and Evaluation
 
@@ -228,4 +212,20 @@ Upon completion of the training and evaluation pipeline:
 
 - **Logs**: Detailed training and validation logs are saved in the `logs` directory.
 - **Plots**: Loss curves and ROC curves for each fold and model are saved in the `plots` directory.
-- **Performance Metrics**: Overall accuracy, confusion matrices, and 
+- **Performance Metrics**: Overall accuracy, confusion matrices, and additional classification metrics are generated and reported.
+
+## Contributing
+
+Contributions are welcome! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on how to get involved.
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Acknowledgements
+
+We thank all contributors and collaborators who have supported the development of this project.
+
+---
+
+*Note: The mathematical formulations provided are intended to offer insight into the underlying principles of the QSup model. For full implementation details, refer to the source code and accompanying documentation.*
