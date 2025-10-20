@@ -11,10 +11,18 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    from torch_geometric.nn import GCNConv, global_mean_pool
     TORCH_AVAILABLE = True
 except Exception:
     TORCH_AVAILABLE = False
+
+# PyG is optional and separate from torch
+PYG_AVAILABLE = False
+if TORCH_AVAILABLE:
+    try:
+        from torch_geometric.nn import GCNConv, global_mean_pool
+        PYG_AVAILABLE = True
+    except Exception:
+        PYG_AVAILABLE = False
 
 try:
     import joblib
@@ -57,123 +65,129 @@ FREQUENCY_BANDS_9 = {
 # -----------------------------
 # Models (mirror server shapes)
 # -----------------------------
-class GCNNet(nn.Module):
-    def __init__(self, in_channels, hidden_channels, num_classes):
-        super().__init__()
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        self.conv3 = GCNConv(hidden_channels, hidden_channels)
-        self.lin   = nn.Linear(hidden_channels, num_classes)
+if TORCH_AVAILABLE and PYG_AVAILABLE:
+    class GCNNet(nn.Module):
+        def __init__(self, in_channels, hidden_channels, num_classes):
+            super().__init__()
+            self.conv1 = GCNConv(in_channels, hidden_channels)
+            self.conv2 = GCNConv(hidden_channels, hidden_channels)
+            self.conv3 = GCNConv(hidden_channels, hidden_channels)
+            self.lin   = nn.Linear(hidden_channels, num_classes)
 
-    def forward(self, x, edge_index, batch):
-        x = F.relu(self.conv1(x, edge_index))
-        x = F.relu(self.conv2(x, edge_index))
-        x = F.relu(self.conv3(x, edge_index))
-        return global_mean_pool(x, batch)
+        def forward(self, x, edge_index, batch):
+            x = F.relu(self.conv1(x, edge_index))
+            x = F.relu(self.conv2(x, edge_index))
+            x = F.relu(self.conv3(x, edge_index))
+            return global_mean_pool(x, batch)
 
-    def embed(self, x, edge_index, batch):
-        return self.forward(x, edge_index, batch)
+        def embed(self, x, edge_index, batch):
+            return self.forward(x, edge_index, batch)
+else:
+    GCNNet = None  # type: ignore
 
 
-class ExtendedQSUP(nn.Module):
-    """
-    Extended QSUP Model copied to match the training architecture in ai_model.py
-    to ensure loaded state_dict aligns and predictions behave correctly.
-    """
-    def __init__(self, input_dim, hidden_dim, num_classes,
-                 num_wavefunctions=3, partial_norm=1.5,
-                 phase_per_dim=False, self_modulation_steps=2,
-                 topk=8):
-        super().__init__()
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        self.num_classes = num_classes
-        self.num_wavefunctions = num_wavefunctions
-        self.partial_norm = partial_norm
-        self.phase_per_dim = phase_per_dim
-        self.self_modulation_steps = self_modulation_steps
-        self.topk = topk
+if TORCH_AVAILABLE:
+    class ExtendedQSUP(nn.Module):
+        """
+        Extended QSUP Model copied to match the training architecture in ai_model.py
+        to ensure loaded state_dict aligns and predictions behave correctly.
+        """
+        def __init__(self, input_dim, hidden_dim, num_classes,
+                     num_wavefunctions=3, partial_norm=1.5,
+                     phase_per_dim=False, self_modulation_steps=2,
+                     topk=8):
+            super().__init__()
+            self.input_dim = input_dim
+            self.hidden_dim = hidden_dim
+            self.num_classes = num_classes
+            self.num_wavefunctions = num_wavefunctions
+            self.partial_norm = partial_norm
+            self.phase_per_dim = phase_per_dim
+            self.self_modulation_steps = self_modulation_steps
+            self.topk = topk
 
-        self.wavefunction_nets = nn.ModuleList([
-            nn.Linear(input_dim, 2 * hidden_dim) for _ in range(num_wavefunctions)
-        ])
-        if phase_per_dim:
-            self.phases = nn.Parameter(torch.zeros(num_wavefunctions, hidden_dim))
-        else:
-            self.phases = nn.Parameter(torch.zeros(num_wavefunctions, 1))
-
-        if self_modulation_steps > 0:
-            self.gating_net = nn.Linear(hidden_dim, hidden_dim)
-        else:
-            self.gating_net = None
-
-        self.classifier = nn.Linear(hidden_dim, num_classes)
-        nn.init.constant_(self.classifier.bias, 0.0)
-        # Slight bias for AD as in training script
-        with torch.no_grad():
-            if self.classifier.bias.numel() > 1:
-                self.classifier.bias[1] = 0.75
-
-    def forward(self, x):
-        batch_size = x.size(0)
-        eps = 1e-8
-
-        wave_r_list = []
-        wave_i_list = []
-        for s in range(self.num_wavefunctions):
-            out = self.wavefunction_nets[s](x)
-            out = torch.exp(-out * out)  # ArcBell
-            alpha = out[:, :self.hidden_dim]
-            beta  = out[:, self.hidden_dim:]
-            norm_sq = torch.sum(alpha**2 + beta**2, dim=1, keepdim=True) + eps
-            factor = torch.sqrt((self.partial_norm**2) / norm_sq)
-            alpha = alpha * factor
-            beta  = beta  * factor
-
-            if self.phase_per_dim:
-                phase = self.phases[s].unsqueeze(0)
+            self.wavefunction_nets = nn.ModuleList([
+                nn.Linear(input_dim, 2 * hidden_dim) for _ in range(num_wavefunctions)
+            ])
+            if phase_per_dim:
+                self.phases = nn.Parameter(torch.zeros(num_wavefunctions, hidden_dim))
             else:
-                phase = self.phases[s]
-            wave_r = alpha * torch.cos(phase) - beta * torch.sin(phase)
-            wave_i = alpha * torch.sin(phase) + beta * torch.cos(phase)
-            wave_r_list.append(wave_r)
-            wave_i_list.append(wave_i)
+                self.phases = nn.Parameter(torch.zeros(num_wavefunctions, 1))
 
-        real_stack = torch.stack(wave_r_list, dim=1)   # (batch, S, H)
-        imag_stack = torch.stack(wave_i_list, dim=1)   # (batch, S, H)
+            if self_modulation_steps > 0:
+                self.gating_net = nn.Linear(hidden_dim, hidden_dim)
+            else:
+                self.gating_net = None
 
-        mean_real = torch.mean(real_stack, dim=1)      # (batch, H)
-        mean_norm = torch.sqrt(torch.sum(mean_real**2, dim=1, keepdim=True)) + eps
-        mean_norm = mean_norm.unsqueeze(1)
-        wave_norms = torch.sqrt(torch.sum(real_stack**2, dim=2, keepdim=True)) + eps
-        dot_prod = torch.sum(real_stack * mean_real.unsqueeze(1), dim=2, keepdim=True)
-        cosine_sim = dot_prod / (wave_norms * mean_norm)
-        cosine_sim = cosine_sim.squeeze(2)
-        interference_weights = F.softmax(cosine_sim, dim=1).unsqueeze(2)
+            self.classifier = nn.Linear(hidden_dim, num_classes)
+            nn.init.constant_(self.classifier.bias, 0.0)
+            # Slight bias for AD as in training script
+            with torch.no_grad():
+                if self.classifier.bias.numel() > 1:
+                    self.classifier.bias[1] = 0.75
 
-        sup_real = torch.sum(real_stack * interference_weights, dim=1)
-        sup_imag = torch.sum(imag_stack * interference_weights, dim=1)
+        def forward(self, x):
+            batch_size = x.size(0)
+            eps = 1e-8
 
-        if self.self_modulation_steps > 0 and self.gating_net is not None:
-            for _ in range(self.self_modulation_steps):
-                mag = torch.sqrt(sup_real**2 + sup_imag**2 + eps)
-                gate = torch.sigmoid(self.gating_net(mag))
-                sup_real = sup_real * gate
-                sup_imag = sup_imag * gate
+            wave_r_list = []
+            wave_i_list = []
+            for s in range(self.num_wavefunctions):
+                out = self.wavefunction_nets[s](x)
+                out = torch.exp(-out * out)  # ArcBell
+                alpha = out[:, :self.hidden_dim]
+                beta  = out[:, self.hidden_dim:]
+                norm_sq = torch.sum(alpha**2 + beta**2, dim=1, keepdim=True) + eps
+                factor = torch.sqrt((self.partial_norm**2) / norm_sq)
+                alpha = alpha * factor
+                beta  = beta  * factor
 
-        mag_sq = sup_real**2 + sup_imag**2
-        if self.topk > 0 and self.topk < self.hidden_dim:
-            vals, inds = torch.topk(mag_sq, self.topk, dim=1)
-            mask = torch.zeros_like(mag_sq).scatter_(1, inds, 1.0)
-            masked = mag_sq * mask
-            sums = torch.sum(masked, dim=1, keepdim=True) + eps
-            probs = masked / sums
-        else:
-            sums = torch.sum(mag_sq, dim=1, keepdim=True) + eps
-            probs = mag_sq / sums
+                if self.phase_per_dim:
+                    phase = self.phases[s].unsqueeze(0)
+                else:
+                    phase = self.phases[s]
+                wave_r = alpha * torch.cos(phase) - beta * torch.sin(phase)
+                wave_i = alpha * torch.sin(phase) + beta * torch.cos(phase)
+                wave_r_list.append(wave_r)
+                wave_i_list.append(wave_i)
 
-        logits = self.classifier(probs)
-        return logits
+            real_stack = torch.stack(wave_r_list, dim=1)   # (batch, S, H)
+            imag_stack = torch.stack(wave_i_list, dim=1)   # (batch, S, H)
+
+            mean_real = torch.mean(real_stack, dim=1)      # (batch, H)
+            mean_norm = torch.sqrt(torch.sum(mean_real**2, dim=1, keepdim=True)) + eps
+            mean_norm = mean_norm.unsqueeze(1)
+            wave_norms = torch.sqrt(torch.sum(real_stack**2, dim=2, keepdim=True)) + eps
+            dot_prod = torch.sum(real_stack * mean_real.unsqueeze(1), dim=2, keepdim=True)
+            cosine_sim = dot_prod / (wave_norms * mean_norm)
+            cosine_sim = cosine_sim.squeeze(2)
+            interference_weights = F.softmax(cosine_sim, dim=1).unsqueeze(2)
+
+            sup_real = torch.sum(real_stack * interference_weights, dim=1)
+            sup_imag = torch.sum(imag_stack * interference_weights, dim=1)
+
+            if self.self_modulation_steps > 0 and self.gating_net is not None:
+                for _ in range(self.self_modulation_steps):
+                    mag = torch.sqrt(sup_real**2 + sup_imag**2 + eps)
+                    gate = torch.sigmoid(self.gating_net(mag))
+                    sup_real = sup_real * gate
+                    sup_imag = sup_imag * gate
+
+            mag_sq = sup_real**2 + sup_imag**2
+            if self.topk > 0 and self.topk < self.hidden_dim:
+                vals, inds = torch.topk(mag_sq, self.topk, dim=1)
+                mask = torch.zeros_like(mag_sq).scatter_(1, inds, 1.0)
+                masked = mag_sq * mask
+                sums = torch.sum(masked, dim=1, keepdim=True) + eps
+                probs = masked / sums
+            else:
+                sums = torch.sum(mag_sq, dim=1, keepdim=True) + eps
+                probs = mag_sq / sums
+
+            logits = self.classifier(probs)
+            return logits
+else:
+    ExtendedQSUP = None  # type: ignore
 
 
 # -----------------------------
@@ -185,14 +199,30 @@ def adjacency_4ch():
     return A
 
 
+def _psd_numpy(sig: np.ndarray, fs: int):
+    # Simple PSD via rFFT with Hann window fallback when scipy is not available
+    x = sig.astype(np.float64)
+    n = x.shape[-1]
+    if n < 8:
+        n = 8
+    # window
+    w = np.hanning(n)
+    xw = x[-n:] * w
+    X = np.fft.rfft(xw)
+    psd = (np.abs(X) ** 2) / (np.sum(w**2) * fs)
+    freqs = np.fft.rfftfreq(n, d=1.0/fs)
+    return freqs, psd
+
+
 def compute_9subbands(sig: np.ndarray):
-    if not SCIPY_AVAILABLE:
-        raise RuntimeError("scipy is required for spectral features; please install scipy.")
-    freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    if SCIPY_AVAILABLE:
+        freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    else:
+        freqs, psd = _psd_numpy(sig, SAMPLING_RATE)
     feats = []
     for (low, high) in FREQUENCY_BANDS_9.values():
         idx = (freqs >= low) & (freqs < high)
-        feats.append(np.sum(psd[idx]))
+        feats.append(float(np.sum(psd[idx])))
     return feats
 
 
@@ -216,9 +246,10 @@ def hjorth_params(sig):
 
 
 def alpha_ratio(sig):
-    if not SCIPY_AVAILABLE:
-        raise RuntimeError("scipy is required for spectral features; please install scipy.")
-    freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    if SCIPY_AVAILABLE:
+        freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    else:
+        freqs, psd = _psd_numpy(sig, SAMPLING_RATE)
     mask_tot = (freqs >= 0.5) & (freqs < 30)
     mask_a   = (freqs >= 8) & (freqs < 12)
     tot_pow  = np.sum(psd[mask_tot])
@@ -227,9 +258,10 @@ def alpha_ratio(sig):
 
 
 def spectral_entropy(sig):
-    if not SCIPY_AVAILABLE:
-        raise RuntimeError("scipy is required for spectral features; please install scipy.")
-    freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    if SCIPY_AVAILABLE:
+        freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    else:
+        freqs, psd = _psd_numpy(sig, SAMPLING_RATE)
     mask = (freqs >= 0.5) & (freqs < 30)
     psd_sub = psd[mask]
     psd_norm = psd_sub / (np.sum(psd_sub) + 1e-12)
@@ -313,7 +345,7 @@ def load_models():
         except Exception as e:
             st.warning(f"Failed to load PCA model: {e}")
 
-    if TORCH_AVAILABLE and os.path.exists(GCN_MODEL_PATH):
+    if TORCH_AVAILABLE and PYG_AVAILABLE and os.path.exists(GCN_MODEL_PATH):
         try:
             model = GCNNet(in_channels=9, hidden_channels=32, num_classes=2)
             sd = torch.load(GCN_MODEL_PATH, map_location="cpu")
