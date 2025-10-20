@@ -1,223 +1,57 @@
 """
 server.py
 
-Run the server with:
-  uvicorn server:app --host 0.0.0.0 --port 8000
+A FastAPI WebSocket server that:
+ • Receives 4-channel cleaned EEG data (from the client) in 1-second chunks.
+ • Maintains a 20-second rolling buffer (5120 samples at 256Hz).
+ • Once the buffer is full, it computes 30 aggregator features (using alpha ratio, spectral entropy, Hjorth parameters)
+   and a 32-dimensional GCN embedding (from 9 subbands per channel) to form a 62-dimensional feature vector (CCV).
+ • Feeds the CCV into pre-trained MLP and QSUP models (and optionally PCA) to produce predictions.
+ • Returns a JSON response with predictions, aggregator features, PCA (pc1, pc2) and an energy measure.
+ • Sends a static 3D energy landscape once upon client connection.
 """
 
 import os
+import time
 import numpy as np
-import mne
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import joblib
-import tensorflow as tf
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from torch_geometric.data import Data
+from torch_geometric.nn import GCNConv, global_mean_pool
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
 from typing import List, Dict, Any
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from scipy.stats import ttest_ind
 import uvicorn
-import warnings
-import asyncio
-from collections import deque
-from scipy.interpolate import griddata
+import scipy.signal
 
-# For CORS
-from fastapi.middleware.cors import CORSMiddleware
+# Model file paths
+MODELS_DIR = "trained_models"
+GCN_MODEL_PATH  = os.path.join(MODELS_DIR, "gcn_model.pth")
+MLP_MODEL_PATH  = os.path.join(MODELS_DIR, "mlp_model.pkl")
+QSUP_MODEL_PATH = os.path.join(MODELS_DIR, "qsup_model.pth")
+PCA_MODEL_PATH  = os.path.join(MODELS_DIR, "pca_model.joblib")
 
-# For registering custom Keras layers
-from tensorflow.keras.utils import register_keras_serializable
-from tensorflow.keras.layers import Layer
+NUM_CHANNELS   = 4
+SAMPLING_RATE  = 256
+WINDOW_SECONDS = 20
+WINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SECONDS  # 5120 samples
 
-# ------------------ CONFIGURATION -------------------------------------------
-
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Suppress TensorFlow warnings if any
-
-# Frequency bands (unchanged from your original)
-FREQUENCY_BANDS = {
-    "Delta": (0.5, 4),
+FREQUENCY_BANDS_9 = {
+    "Delta":  (0.5, 4),
     "Theta1": (4, 6),
     "Theta2": (6, 8),
-    "Alpha1": (8, 10),
-    "Alpha2": (10, 12),
-    "Beta1": (12, 20),
-    "Beta2": (20, 30),
-    "Gamma1": (30, 40),
-    "Gamma2": (40, 50),
+    "Alpha1": (8,10),
+    "Alpha2": (10,12),
+    "Beta1":  (12,18),
+    "Beta2":  (18,22),
+    "Beta3":  (22,26),
+    "Beta4":  (26,30)
 }
 
-# Updated Feature Names (Removed 'Spatial_Complexity' and added 'Transformer_Output')
-FEATURE_NAMES = list(FREQUENCY_BANDS.keys()) + [
-    "Alpha_Ratio", "Theta_Ratio",
-    "Shannon_Entropy",
-    "Hjorth_Activity", "Hjorth_Mobility", "Hjorth_Complexity",
-    "Transformer_Output"
-]
-
-# Paths
-MODELS_DIR = "trained_models"
-MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_fold_3.keras")  # Updated to .keras
-MLP_SCALER_PATH = os.path.join(MODELS_DIR, "mlp_scaler_fold_3.joblib")
-PCA_MODEL_PATH = os.path.join(MODELS_DIR, "pca_model.joblib")
-TRANSFORMER_MODEL_PATH = os.path.join(MODELS_DIR, "transformer_model.keras")  # Transformer model path
-
-# EEG streaming config
-SAMPLING_RATE = 256
-WINDOW_SIZE = 20
-WINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SIZE
-
-# Energy landscape config
-GRID_RESOLUTION = 50
-ENERGY_RANGE = 1.0
-
-# ------------------ CUSTOM LAYER DEFINITION ----------------------------------
-
-@register_keras_serializable()
-class PositionalEncoding(Layer):
-    def __init__(self, maxlen, d_model):
-        """
-        Positional Encoding Layer
-        Args:
-            maxlen: Maximum sequence length.
-            d_model: Dimensionality of embeddings.
-        """
-        super(PositionalEncoding, self).__init__()
-        self.pos_encoding = self.positional_encoding(maxlen, d_model)
-
-    def get_angles(self, position, i, d_model):
-        """Generate angles for the positional encoding formula."""
-        angles = 1 / np.power(10000, (2 * (i // 2)) / np.float32(d_model))
-        return position * angles
-
-    def positional_encoding(self, maxlen, d_model):
-        """Create positional encoding for sequences."""
-        position = np.arange(maxlen)[:, np.newaxis]
-        i = np.arange(d_model)[np.newaxis, :]
-        angle_rads = self.get_angles(position, i, d_model)
-
-        # Apply sin to even indices, cos to odd indices
-        angle_rads[:, 0::2] = np.sin(angle_rads[:, 0::2])
-        angle_rads[:, 1::2] = np.cos(angle_rads[:, 1::2])
-
-        pos_encoding = angle_rads[np.newaxis, ...]
-        return tf.cast(pos_encoding, dtype=tf.float32)
-
-    def call(self, inputs):
-        """Add positional encoding to inputs."""
-        return inputs + self.pos_encoding[:, :tf.shape(inputs)[1], :]
-
-# ------------------ FEATURE EXTRACTION --------------------------------------
-
-def compute_band_powers(data: np.ndarray, sfreq: float) -> Dict[str, float]:
-    psd, freqs = mne.time_frequency.psd_array_multitaper(data, sfreq=sfreq, verbose=False)
-    band_powers = {}
-    for band, (fmin, fmax) in FREQUENCY_BANDS.items():
-        idx_band = (freqs >= fmin) & (freqs <= fmax)
-        # Mean over channels and frequencies
-        band_powers[band] = np.mean(psd[:, idx_band], axis=1).mean()
-    return band_powers
-
-def compute_shannon_entropy(data: np.ndarray) -> float:
-    flattened = data.flatten()
-    counts, _ = np.histogram(flattened, bins=256, density=True)
-    probs = counts / np.sum(counts)
-    entropy_val = -np.sum(probs * np.log2(probs + 1e-12))
-    return entropy_val
-
-def compute_hjorth_parameters(data: np.ndarray) -> Dict[str, float]:
-    activity = np.var(data) + 1e-12
-    first_derivative = np.diff(data, axis=-1)
-    mobility = np.sqrt(np.var(first_derivative) / activity)
-    second_derivative = np.diff(first_derivative, axis=-1)
-    complexity = np.sqrt(np.var(second_derivative) / (np.var(first_derivative) + 1e-12))
-    return {
-        "Hjorth_Activity": float(activity),
-        "Hjorth_Mobility": float(mobility),
-        "Hjorth_Complexity": float(complexity)
-    }
-
-def extract_features(data: np.ndarray) -> Dict[str, Any]:
-    band_powers = compute_band_powers(data, SAMPLING_RATE)
-    
-    alpha_power = band_powers.get("Alpha1", 0.0) + band_powers.get("Alpha2", 0.0)
-    theta_power = band_powers.get("Theta1", 0.0) + band_powers.get("Theta2", 0.0)
-    total_power = sum(band_powers.values()) + 1e-12
-    alpha_ratio = alpha_power / total_power
-    theta_ratio = theta_power / total_power
-    
-    shannon_entropy = compute_shannon_entropy(data)
-    hjorth_params = compute_hjorth_parameters(data)
-    
-    features = {band: band_powers.get(band, 0.0) for band in FREQUENCY_BANDS.keys()}
-    features["Alpha_Ratio"] = alpha_ratio
-    features["Theta_Ratio"] = theta_ratio
-    features["Shannon_Entropy"] = shannon_entropy
-    features.update(hjorth_params)
-    
-    # 'Spatial_Complexity' has been removed
-    # features["Spatial_Complexity"] = 0.0  # Removed
-    
-    return features
-
-def compute_feature_stats(features: Dict[str, float]) -> Dict[str, Dict[str, float]]:
-    stats = {}
-    for k, v in features.items():
-        stats[k] = {
-            "mean": v,
-            "std": 0.0
-        }
-    return stats
-
-# ------------------ ENERGY LANDSCAPE ----------------------------------------
-
-def compute_energy_weights(features: List[str]) -> Dict[str, float]:
-    # Assign weight=1.0 for every feature
-    return {f: 1.0 for f in features}
-
-def compute_energy(features: Dict[str, float], weights: Dict[str, float]) -> float:
-    val = 0.0
-    for k, w in weights.items():
-        val += features.get(k, 0.0) * w
-    return val
-
-def load_or_fit_pca(features: np.ndarray, n_components: int = 2) -> PCA:
-    """
-    Attempts to load an existing PCA model; if none is found, it fits a new one.
-    """
-    if os.path.exists(PCA_MODEL_PATH):
-        pca_model = joblib.load(PCA_MODEL_PATH)
-        print("[INFO] Loaded existing PCA model.")
-    else:
-        pca_model = PCA(n_components=n_components)
-        pca_model.fit(features)
-        joblib.dump(pca_model, PCA_MODEL_PATH)
-        print("[INFO] Fitted and saved new PCA model.")
-    return pca_model
-
-def generate_energy_landscape_grid(pca: PCA, principal_components: np.ndarray, energy_vals: np.ndarray) -> Dict[str, Any]:
-    """
-    Generates grid data for the 2D PCA + energy landscape.
-    """
-    x_min, x_max = principal_components[:,0].min() - ENERGY_RANGE, principal_components[:,0].max() + ENERGY_RANGE
-    y_min, y_max = principal_components[:,1].min() - ENERGY_RANGE, principal_components[:,1].max() + ENERGY_RANGE
-    xi = np.linspace(x_min, x_max, GRID_RESOLUTION)
-    yi = np.linspace(y_min, y_max, GRID_RESOLUTION)
-    xi, yi = np.meshgrid(xi, yi)
-    
-    zi = griddata(principal_components, energy_vals, (xi, yi), method='cubic')
-    # Replace any NaNs with the min value in zi
-    zi = np.nan_to_num(zi, nan=np.nanmin(zi))
-    
-    grid_data = {
-        "x": xi.tolist(),
-        "y": yi.tolist(),
-        "z": zi.tolist()
-    }
-    return grid_data
-
-# ------------------ Pydantic Models -----------------------------------------
-
+# Pydantic models
 class EEGSample(BaseModel):
     channels: List[float]
 
@@ -225,8 +59,12 @@ class EEGData(BaseModel):
     data: List[EEGSample]
 
 class PredictionResponse(BaseModel):
-    prediction: int
-    confidence: float
+    prediction_mlp: int
+    confidence_mlp: float
+    prediction_qsup: int
+    confidence_qsup: float
+    prediction_gcn: int
+    confidence_gcn: float
     features: Dict[str, float]
     stats: Dict[str, Dict[str, float]]
     pc1: float
@@ -234,19 +72,35 @@ class PredictionResponse(BaseModel):
     energy: float
 
 class EnergyLandscape(BaseModel):
-    x: List[List[float]]
-    y: List[List[float]]
-    z: List[List[float]]
+    energy_landscape: Dict[str, List[float]]
 
-# ------------------ FASTAPI APPLICATION -------------------------------------
+# Model classes
+class GCNNet(nn.Module):
+    def __init__(self, in_channels, hidden_channels, num_classes):
+        super().__init__()
+        self.conv1 = GCNConv(in_channels, hidden_channels)
+        self.conv2 = GCNConv(hidden_channels, hidden_channels)
+        self.conv3 = GCNConv(hidden_channels, hidden_channels)
+        self.lin   = nn.Linear(hidden_channels, num_classes)
+    def forward(self, x, edge_index, batch):
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
+        x = F.relu(self.conv3(x, edge_index))
+        return global_mean_pool(x, batch)
+    def embed(self, x, edge_index, batch):
+        return self.forward(x, edge_index, batch)
 
-app = FastAPI(
-    title="Continuous EEG Prediction Server with Energy Landscape",
-    description="Streams EEG predictions and sends a 3D energy landscape to clients.",
-    version="1.0.0"
-)
+class ExtendedQSUP(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_classes):
+        super().__init__()
+        self.lin1 = nn.Linear(input_dim, hidden_dim)
+        self.lin2 = nn.Linear(hidden_dim, num_classes)
+    def forward(self, x):
+        x = torch.relu(self.lin1(x))
+        return self.lin2(x)
 
-# CORS - allowing all for demonstration
+# FastAPI setup
+app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -255,219 +109,273 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ------------------ LOAD MODELS ON STARTUP ----------------------------------
 try:
-    mlp_model = tf.keras.models.load_model(MLP_MODEL_PATH)
-    print("[INFO] MLP model loaded successfully.")
+    gcn_model = GCNNet(in_channels=9, hidden_channels=32, num_classes=2)
+    sd_gcn = torch.load(GCN_MODEL_PATH, map_location="cpu")
+    gcn_model.load_state_dict(sd_gcn, strict=False)
+    gcn_model.eval()
+    print("[INFO] GCN model loaded.")
 except Exception as e:
+    print("[ERROR] GCN model:", e)
+    gcn_model = None
+
+try:
+    mlp_model = joblib.load(MLP_MODEL_PATH)
+    print("[INFO] MLP model loaded.")
+except Exception as e:
+    print("[ERROR] MLP model:", e)
     mlp_model = None
-    print(f"[ERROR] Failed to load MLP model: {e}")
 
 try:
-    mlp_scaler = joblib.load(MLP_SCALER_PATH)
-    print("[INFO] MLP scaler loaded successfully.")
+    qsup_model = ExtendedQSUP(input_dim=62, hidden_dim=32, num_classes=2)
+    sd_qsup = torch.load(QSUP_MODEL_PATH, map_location="cpu", weights_only=False)
+    qsup_model.load_state_dict(sd_qsup, strict=False)
+    qsup_model.eval()
+    print("[INFO] QSUP model loaded.")
 except Exception as e:
-    mlp_scaler = None
-    print(f"[ERROR] Failed to load MLP scaler: {e}")
+    print("[ERROR] QSUP model:", e)
+    qsup_model = None
 
-# Load the Transformer model
 try:
-    transformer_model = tf.keras.models.load_model(TRANSFORMER_MODEL_PATH)
-    print("[INFO] Transformer model loaded successfully.")
+    pca_model = joblib.load(PCA_MODEL_PATH)
+    print("[INFO] PCA model loaded.")
 except Exception as e:
-    transformer_model = None
-    print(f"[ERROR] Failed to load Transformer model: {e}")
+    print("[ERROR] PCA model:", e)
+    pca_model = None
 
-# Initialize a lock for Transformer model to handle concurrent access
-transformer_lock = asyncio.Lock()
+def generate_energy_landscape_3d():
+    x_vals = np.linspace(-2,2,50)
+    y_vals = np.linspace(-2,2,50)
+    X, Y = np.meshgrid(x_vals, y_vals)
+    Z = np.exp(-(X**2 + Y**2))
+    return {"energy_landscape": {
+        "x": X.flatten().tolist(),
+        "y": Y.flatten().tolist(),
+        "z": Z.flatten().tolist()
+    }}
 
-# For PCA, we simulate or load training features to either load or fit PCA
-def load_training_features() -> np.ndarray:
-    """
-    In your real scenario, load actual training features from a file.
-    For demonstration, we just generate random data here.
-    """
-    np.random.seed(42)
-    sim_data = np.random.rand(1000, len(FEATURE_NAMES))
-    return sim_data
+energy_landscape_data = generate_energy_landscape_3d()
 
-training_features = load_training_features()
-pca = load_or_fit_pca(training_features, n_components=2)
-weights = compute_energy_weights(FEATURE_NAMES)
+# Aggregator functions
+def adjacency_4ch():
+    A = np.ones((4,4), dtype=np.float32)
+    np.fill_diagonal(A, 0)
+    return A
 
-# Generate "training_energy" for precomputed energy landscape
-training_energy = []
-for row in training_features:
-    ft_dict = {FEATURE_NAMES[i]: row[i] for i in range(len(FEATURE_NAMES))}
-    e_val = compute_energy(ft_dict, weights)
-    training_energy.append(e_val)
+def compute_9subbands(sig: np.ndarray):
+    freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    feats = []
+    for (low, high) in FREQUENCY_BANDS_9.values():
+        idx = (freqs >= low) & (freqs < high)
+        feats.append(np.sum(psd[idx]))
+    return feats
 
-training_energy = np.array(training_energy)
-pc_data = pca.transform(training_features)
+def channelwise_9feats(chunk_4ch: np.ndarray):
+    out = []
+    for c in range(NUM_CHANNELS):
+        feats9 = compute_9subbands(chunk_4ch[c])
+        out.append(feats9)
+    return np.array(out, dtype=np.float32)
 
-# Pre-generate the 2D grid for the energy landscape
-energy_landscape_data = generate_energy_landscape_grid(pca, pc_data, training_energy)
+def hjorth_params(sig):
+    x = sig.flatten()
+    act = np.var(x)
+    dx = np.diff(x)
+    mob = np.sqrt(np.var(dx) / (act + 1e-8))
+    ddx = np.diff(dx)
+    mob_dx = np.sqrt(np.var(ddx) / (np.var(dx) + 1e-8))
+    comp = mob_dx / (mob + 1e-8)
+    return act, mob, comp
 
-# ------------------ CONNECTION MANAGER --------------------------------------
+def alpha_ratio(sig):
+    freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    mask_tot = (freqs >= 0.5) & (freqs < 30)
+    mask_a   = (freqs >= 8) & (freqs < 12)
+    tot_pow  = np.sum(psd[mask_tot])
+    alp_pow  = np.sum(psd[mask_a])
+    return alp_pow / (tot_pow + 1e-12)
 
+def spectral_entropy(sig):
+    freqs, psd = scipy.signal.welch(sig, SAMPLING_RATE, nperseg=512)
+    mask = (freqs >= 0.5) & (freqs < 30)
+    psd_sub = psd[mask]
+    psd_norm = psd_sub / (np.sum(psd_sub) + 1e-12)
+    ent = -np.sum(psd_norm * np.log(psd_norm + 1e-12))
+    return ent
+
+def aggregator_30(chunk_4ch: np.ndarray):
+    alpha_ratios = []
+    entropies = []
+    hj_all = []
+    for c in range(NUM_CHANNELS):
+        arr = chunk_4ch[c]
+        ar = alpha_ratio(arr)
+        se = spectral_entropy(arr)
+        act, mob, comp = hjorth_params(arr)
+        alpha_ratios.append(ar)
+        entropies.append(se)
+        hj_all.extend([act, mob, comp])
+    alpha_mean = np.mean(alpha_ratios)
+    alpha_std  = np.std(alpha_ratios)
+    ent_mean   = np.mean(entropies)
+    ent_std    = np.std(entropies)
+    hj_arr = np.array(hj_all).reshape(NUM_CHANNELS, 3)
+    hj_act_mean = np.mean(hj_arr[:,0])
+    hj_act_std  = np.std(hj_arr[:,0])
+    hj_mob_mean = np.mean(hj_arr[:,1])
+    hj_mob_std  = np.std(hj_arr[:,1])
+    hj_comp_mean = np.mean(hj_arr[:,2])
+    hj_comp_std  = np.std(hj_arr[:,2])
+    aggregator_10 = [
+        alpha_mean, alpha_std,
+        ent_mean,   ent_std,
+        hj_act_mean, hj_act_std,
+        hj_mob_mean, hj_mob_std,
+        hj_comp_mean, hj_comp_std
+    ]
+    feats_20 = []
+    for c in range(NUM_CHANNELS):
+        feats_20.append(alpha_ratios[c])
+        feats_20.append(entropies[c])
+        off = c * 3
+        feats_20.append(hj_all[off+0])
+        feats_20.append(hj_all[off+1])
+        feats_20.append(hj_all[off+2])
+    final_30 = np.concatenate([
+        np.array(feats_20, dtype=np.float32),
+        np.array(aggregator_10, dtype=np.float32)
+    ])
+    return final_30
+
+def compute_energy(feats: Dict[str, float]) -> float:
+    return sum(feats.values())
+
+def compute_stats(feats: Dict[str, float]) -> Dict[str, Dict[str, float]]:
+    out = {}
+    for k, v in feats.items():
+        out[k] = {"mean": v, "std": 0.0}
+    return out
+
+# WebSocket pydantic models (reuse EEGSample and EEGData above)
+class EEGSample(BaseModel):
+    channels: List[float]
+
+class EEGData(BaseModel):
+    data: List[EEGSample]
+
+# Connection Manager
 class ConnectionManager:
-    """
-    Manages client connections, buffering data for each connection,
-    and sends predictions back to the client.
-    """
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
-        self.buffers: Dict[WebSocket, deque] = {}
-        self.lock = asyncio.Lock()
-        # Store our precomputed grid data so we don't compute it repeatedly
-        self.grid_data = energy_landscape_data
+        self.active_connections: List[Any] = []
+        self.buffer = np.zeros((NUM_CHANNELS, 0), dtype=np.float32)
+        self.energy_landscape = self.generate_energy_landscape()
 
-    async def connect(self, websocket: WebSocket):
-        """
-        Accepts a WebSocket connection and sends the precomputed energy landscape.
-        """
-        await websocket.accept()
-        async with self.lock:
-            self.active_connections.append(websocket)
-            self.buffers[websocket] = deque(maxlen=WINDOW_SAMPLES)
-        print(f"[INFO] Client connected: {websocket.client}")
-        
-        # Send the energy landscape to the client immediately
-        landscape = EnergyLandscape(**self.grid_data)
-        await websocket.send_json(landscape.dict())
-        print(f"[INFO] Energy landscape sent to {websocket.client}")
+    def generate_energy_landscape(self):
+        x_vals = np.linspace(-2, 2, 50)
+        y_vals = np.linspace(-2, 2, 50)
+        X, Y = np.meshgrid(x_vals, y_vals)
+        Z = np.exp(-(X**2 + Y**2))
+        return {"energy_landscape": {
+            "x": X.flatten().tolist(),
+            "y": Y.flatten().tolist(),
+            "z": Z.flatten().tolist()
+        }}
 
-    async def disconnect(self, websocket: WebSocket):
-        """
-        Removes the WebSocket connection.
-        """
-        async with self.lock:
-            self.active_connections.remove(websocket)
-            del self.buffers[websocket]
-        print(f"[INFO] Client disconnected: {websocket.client}")
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active_connections.append(ws)
+        print("[INFO] client connected")
+        await ws.send_json(self.energy_landscape)
 
-    async def receive_data(self, websocket: WebSocket, eeg_data: EEGData):
-        """
-        Called whenever new EEG data arrives from the client.
-        Buffers the data, and when we have enough samples, makes a prediction.
-        """
-        buffer = self.buffers.get(websocket)
-        if buffer is None:
-            print("[WARNING] Received data from unknown websocket.")
-            return
-        
-        # Accumulate new samples
-        for sample in eeg_data.data:
-            buffer.append(sample.channels)
-        
-        # If we have enough samples (>= WINDOW_SAMPLES), process them
-        if len(buffer) >= WINDOW_SAMPLES:
-            window_data = np.array(buffer).T  # shape: (n_channels, n_times)
-            buffer.clear()  # reset the buffer
-            
-            # Extract features
-            feats = extract_features(window_data)
-            
-            # Process through Transformer model to get Transformer_Output
-            if transformer_model is not None:
+    async def disconnect(self, ws: WebSocket):
+        self.active_connections.remove(ws)
+
+    async def receive_data(self, ws: WebSocket, data: EEGData):
+        # The client sends only the cleaned 4-channel EEG (F3, F4, P3, O2)
+        chunk = np.array([s.channels for s in data.data], dtype=np.float32).T  # shape (4, n_samples)
+        self.buffer = np.concatenate((self.buffer, chunk), axis=1)
+        if self.buffer.shape[1] > WINDOW_SAMPLES:
+            self.buffer = self.buffer[:, -WINDOW_SAMPLES:]
+        if self.buffer.shape[1] >= WINDOW_SAMPLES:
+            gf_30 = aggregator_30(self.buffer).reshape(1, 30)
+            node_feats = channelwise_9feats(self.buffer)
+            A = adjacency_4ch()
+            edge_idx = np.array(np.nonzero(A))
+            edge_idx = torch.tensor(edge_idx, dtype=torch.long)
+            x_tensor = torch.tensor(node_feats, dtype=torch.float)
+            batch = torch.zeros(x_tensor.shape[0], dtype=torch.long)
+            gcn_emb = np.zeros((1, 32), dtype=np.float32)
+            if gcn_model:
+                with torch.no_grad():
+                    data_obj = Data(x=x_tensor, edge_index=edge_idx, y=torch.zeros(1, dtype=torch.long), batch=batch)
+                    emb = gcn_model.embed(data_obj.x, data_obj.edge_index, data_obj.batch)
+                    gcn_emb = emb.cpu().numpy().reshape(1, -1)
+            full_vec = np.hstack([gf_30, gcn_emb])  # (1,62)
+            mlp_pred, mlp_conf = 0, 0.0
+            if mlp_model:
                 try:
-                    # Reshape window_data for Transformer (1, n_times, n_channels)
-                    window_data_trans = window_data[np.newaxis, :, :]
-                    
-                    # Acquire lock before using the Transformer model
-                    async with transformer_lock:
-                        transformer_output = transformer_model.predict(window_data_trans, verbose=0).ravel()[0]
-                    
-                    feats["Transformer_Output"] = float(transformer_output)
-                except Exception as e:
-                    print(f"[ERROR] Failed to get Transformer output: {e}")
-                    feats["Transformer_Output"] = 0.0
-            else:
-                print("[WARNING] Transformer model is not loaded. Using default Transformer_Output=0.0")
-                feats["Transformer_Output"] = 0.0
-            
-            # Convert features to a feature vector in the correct order
-            feat_vec = np.array([feats.get(f, 0.0) for f in FEATURE_NAMES]).reshape(1, -1)
-            
-            # Scale features, then predict using MLP
-            if mlp_model is not None and mlp_scaler is not None:
+                    proba = mlp_model.predict_proba(full_vec)[0]
+                    mlp_conf = float(proba[1])
+                    mlp_pred = int(mlp_conf >= 0.5)
+                except:
+                    pass
+            qsup_pred, qsup_conf = 0, 0.0
+            if qsup_model:
+                with torch.no_grad():
+                    t_in = torch.tensor(full_vec, dtype=torch.float)
+                    logits = qsup_model(t_in)
+                    p_q = torch.softmax(logits, dim=1)
+                    qsup_conf = float(p_q[0, 1])
+                    qsup_pred = int(qsup_conf >= 0.5)
+            pc1, pc2 = 0.0, 0.0
+            if pca_model:
                 try:
-                    scaled_vec = mlp_scaler.transform(feat_vec)
-                    
-                    confidence = mlp_model.predict(scaled_vec)[0][0]  # Assuming sigmoid activation
-                    prediction = int(confidence >= 0.5)
-                except Exception as e:
-                    print(f"[ERROR] Prediction failed: {e}")
-                    prediction = 0
-                    confidence = 0.0
-            else:
-                # If we failed to load the MLP, no predictions can be made
-                prediction = 0
-                confidence = 0.0
-            
-            # Compute stats for reference
-            stats = compute_feature_stats(feats)
-            
-            # Compute energy
-            e_val = compute_energy(feats, weights)
-            
-            # Project to PCA space
-            try:
-                pc = pca.transform(feat_vec)[0]
-                pc1, pc2 = float(pc[0]), float(pc[1])
-            except Exception as e:
-                print(f"[ERROR] PCA transformation failed: {e}")
-                pc1, pc2 = 0.0, 0.0
-            
-            # Create the response
-            response = PredictionResponse(
-                prediction=int(prediction),
-                confidence=float(confidence),
-                features=feats,
-                stats=stats,
-                pc1=pc1,
-                pc2=pc2,
-                energy=e_val
-            )
-            
-            # Send JSON back to the client
-            try:
-                await websocket.send_json(response.dict())
-                print(f"[INFO] Sent prediction to {websocket.client}. Prediction={prediction}, Confidence={confidence:.2f}")
-            except Exception as e:
-                print(f"[ERROR] Failed to send prediction: {e}")
+                    pc = pca_model.transform(full_vec)[0]
+                    pc1, pc2 = float(pc[0]), float(pc[1])
+                except:
+                    pass
+            feats_dict = {f"agg{i}": float(gf_30[0, i]) for i in range(30)}
+            e_val = compute_energy(feats_dict)
+            stats_dict = compute_stats(feats_dict)
+            response = {
+                "prediction_mlp": mlp_pred,
+                "confidence_mlp": mlp_conf,
+                "prediction_qsup": qsup_pred,
+                "confidence_qsup": qsup_conf,
+                "prediction_gcn": 0,
+                "confidence_gcn": 0.0,
+                "features": feats_dict,
+                "stats": stats_dict,
+                "pc1": pc1,
+                "pc2": pc2,
+                "energy": e_val
+            }
+            await ws.send_json(response)
+            print(f"[INFO] Predictions: MLP={mlp_pred}({mlp_conf:.2f}), QSUP={qsup_pred}({qsup_conf:.2f})")
 
 manager = ConnectionManager()
 
-# ------------------ WEBSOCKET ENDPOINT --------------------------------------
+from fastapi import WebSocket
+from fastapi import WebSocketDisconnect
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint that continually listens for EEG data,
-    processes it, and sends back predictions.
-    """
-    await manager.connect(websocket)
+async def websocket_endpoint(ws: WebSocket):
+    await manager.connect(ws)
     try:
         while True:
-            message = await websocket.receive_text()
+            msg = await ws.receive_text()
             try:
-                # Attempt to parse as EEGData
-                data = EEGData.parse_raw(message)
-                await manager.receive_data(websocket, data)
+                data_obj = EEGData.parse_raw(msg)
+                await manager.receive_data(ws, data_obj)
             except ValidationError as ve:
-                err_msg = {"error": f"Validation Error: {ve}"}
-                await websocket.send_json(err_msg)
+                await ws.send_json({"error": f"ValidationError: {ve}"})
             except Exception as e:
-                err_msg = {"error": f"Failed to process data: {e}"}
-                await websocket.send_json(err_msg)
+                await ws.send_json({"error": f"Failed to process data: {e}"})
     except WebSocketDisconnect:
-        await manager.disconnect(websocket)
+        await manager.disconnect(ws)
     except Exception as e:
-        await manager.disconnect(websocket)
-        print(f"[ERROR] Unexpected error: {e}")
+        await manager.disconnect(ws)
+        print("[ERROR]", e)
 
-# ------------------ MAIN RUN -----------------------------------------------
-
-if __name__ == "__main__":
+if __name__=="__main__":
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
