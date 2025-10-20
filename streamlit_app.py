@@ -368,6 +368,8 @@ def discover_real_recordings():
         for root in roots:
             if os.path.isdir(root):
                 files.extend(glob.glob(os.path.join(root, "**", "*.set"), recursive=True))
+        # Prefer raw dataset paths (exclude derivatives to avoid duplicates)
+        files = [f for f in files if "/derivatives/" not in f]
         # Assign by subject id prefix in filename
         for f in files:
             base = os.path.basename(f)
@@ -950,6 +952,12 @@ if page == "Inference":
         elif mode == "Demo signal":
             dur = st.slider("Demo duration (seconds)", min_value=5, max_value=600, value=60, step=5)
             cond = st.radio("Simulated condition", ["Healthy", "Alzheimer's"], horizontal=True)
+            # Show which subject is used (for debugging/traceability)
+            pools = discover_real_recordings()
+            cand = (pools["healthy"] if cond == "Healthy" else pools["alz"]) or []
+            if cand:
+                subj = os.path.basename(cand[0]).split('_')[0]
+                st.caption(f"Simulated source: {subj}")
             eeg_array = generate_demo_signal(cond, dur)
         elif mode == "Live demo":
             # Initialize / controls
@@ -960,6 +968,11 @@ if page == "Inference":
                 st.session_state.conf_hist = []
                 st.session_state.last_tick = 0.0
             cond = st.radio("Simulated condition", ["Healthy", "Alzheimer's"], horizontal=True)
+            pools = discover_real_recordings()
+            cand = (pools["healthy"] if cond == "Healthy" else pools["alz"]) or []
+            if cand:
+                subj = os.path.basename(cand[0]).split('_')[0]
+                st.caption(f"Simulated source: {subj}")
             dur_total = st.slider("Total live duration (seconds)", 10, 900, 120, step=10)
             view_secs = st.slider("Chart window (seconds)", 5, 60, 20, step=5)
             plot_rate = st.slider("Plot rate (Hz)", 16, 128, 64, step=16)
