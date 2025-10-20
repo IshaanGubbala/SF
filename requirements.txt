@@ -4,6 +4,7 @@ pandas
 scipy
 scikit-learn
 joblib
+mne  # EEG I/O (EEGLAB .set), may be heavy on Streamlit Cloud
 
 # Optional (uncomment to enable PyTorch/QSUP/GCN locally or on a host that supports it):
 # Install CPU PyTorch so QSUP can run on Streamlit Cloud (requires Python 3.11)

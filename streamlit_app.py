@@ -327,10 +327,152 @@ def compute_energy(feats_vec_30: np.ndarray) -> float:
 # -----------------------------
 # Simulation helpers (Healthy vs Alzheimer's)
 # -----------------------------
+# Real-recording backed "simulation" (preferred)
+def _load_labels_ds():
+    try:
+        import pandas as pd
+        # Prefer repo-relative participants files
+        p1 = os.path.join("ds004504", "participants.tsv")
+        p2 = os.path.join("ds003800", "participants.tsv")
+        labels = {}
+        if os.path.exists(p1):
+            df1 = pd.read_csv(p1, sep="\t")
+            # Map A->AD(1), C->Control(0). Keep F as AD if present
+            mp = {"A": 1, "C": 0, "F": 1}
+            df1 = df1[df1["Group"].isin(mp.keys())]
+            labels.update(df1.set_index("participant_id")["Group"].map(mp).to_dict())
+        if os.path.exists(p2):
+            df2 = pd.read_csv(p2, sep="\t")
+            # Treat ds003800 as AD(1) unless label column present
+            if "Group" in df2.columns:
+                mp2 = {"A": 1, "C": 0, "F": 1}
+                df2 = df2[df2["Group"].isin(mp2.keys())]
+                labels.update(df2.set_index("participant_id")["Group"].map(mp2).to_dict())
+            else:
+                labels.update(df2.set_index("participant_id").assign(v=1)["v"].to_dict())
+        return labels
+    except Exception:
+        return {}
+
+
+@st.cache_resource(show_spinner=False)
+def discover_real_recordings():
+    """Scan ds004504 and ds003800 for .set files and classify by label."""
+    labels = _load_labels_ds()
+    pools = {"healthy": [], "alz": []}
+    try:
+        import glob
+        # Collect .set files
+        roots = ["ds004504", "ds003800"]
+        files = []
+        for root in roots:
+            if os.path.isdir(root):
+                files.extend(glob.glob(os.path.join(root, "**", "*.set"), recursive=True))
+        # Assign by subject id prefix in filename
+        for f in files:
+            base = os.path.basename(f)
+            subj = base.split("_")[0]
+            lab = labels.get(subj)
+            if lab is None:
+                continue
+            if lab == 0:
+                pools["healthy"].append(f)
+            else:
+                pools["alz"].append(f)
+    except Exception:
+        pass
+    return pools
+
+
+def _pick_channels(raw, prefer=("F3","F4","P3","O2")):
+    picks = []
+    avail = set(raw.ch_names)
+    for name in prefer:
+        if name in avail:
+            picks.append(name)
+    # If fewer than 4, fill with any EEG channels
+    if len(picks) < 4:
+        eegs = [ch for ch in raw.ch_names if ch.upper().startswith("F") or ch.upper().startswith("P") or ch.upper().startswith("O") or ch.upper().startswith("C")]
+        for ch in eegs:
+            if ch not in picks:
+                picks.append(ch)
+            if len(picks) >= 4:
+                break
+    # Final fallback: first 4 channels
+    if len(picks) < 4:
+        picks = raw.ch_names[:4]
+    return picks[:4]
+
+
+def _load_real_signal(path: str, duration_sec: int) -> np.ndarray:
+    """Load a 4xN segment at 256 Hz from a .set file."""
+    import mne
+    raw = mne.io.read_raw_eeglab(path, preload=True, verbose=False)
+    raw.filter(1.0, 50.0, fir_design="firwin", verbose=False)
+    raw.resample(SAMPLING_RATE, npad="auto")
+    chs = _pick_channels(raw)
+    data = raw.get_data(picks=chs)
+    need = duration_sec * SAMPLING_RATE
+    if data.shape[1] < need:
+        reps = int(np.ceil(need / data.shape[1]))
+        data = np.tile(data, reps)[:, :need]
+    else:
+        data = data[:, :need]
+    return data.astype(np.float32)
+
+
+def get_real_demo_signal(condition: str, duration_sec: int) -> np.ndarray | None:
+    pools = discover_real_recordings()
+    candidates = pools["healthy"] if condition == "Healthy" else pools["alz"]
+    if not candidates:
+        return None
+    path = candidates[0]
+    try:
+        sig = _load_real_signal(path, duration_sec)
+        return sig.T
+    except Exception:
+        return None
+
+
+def get_real_demo_chunk(condition: str, nsamp: int, t_start_sec: float, cache_key: str = "_real_chunk") -> np.ndarray | None:
+    pools = discover_real_recordings()
+    candidates = pools["healthy"] if condition == "Healthy" else pools["alz"]
+    if not candidates:
+        return None
+    path = candidates[0]
+    # Cache full 5 min per condition to serve chunks quickly
+    key = f"{cache_key}_{'H' if condition=='Healthy' else 'A'}"
+    if key not in st.session_state:
+        try:
+            buf = _load_real_signal(path, duration_sec=5*60)  # 5 minutes
+        except Exception:
+            return None
+        st.session_state[key] = buf  # shape 4 x N
+        st.session_state[key+"_idx"] = 0
+    buf = st.session_state[key]
+    idx = st.session_state.get(key+"_idx", 0)
+    # If asked with t_start_sec, align index
+    idx = int(t_start_sec * SAMPLING_RATE) % buf.shape[1]
+    end = idx + nsamp
+    if end <= buf.shape[1]:
+        chunk = buf[:, idx:end]
+    else:
+        part1 = buf[:, idx:]
+        part2 = buf[:, : end - buf.shape[1]]
+        chunk = np.concatenate([part1, part2], axis=1)
+    st.session_state[key+"_idx"] = (idx + nsamp) % buf.shape[1]
+    return chunk
 def generate_demo_chunk(condition: str, nsamp: int, t_start_sec: float = 0.0) -> np.ndarray:
     """Generate a 4xnsamp synthetic EEG chunk.
     condition: 'Healthy' or 'Alzheimer\'s'
     """
+    # Prefer real recordings; fallback to synthetic if unavailable
+    try:
+        ch = get_real_demo_chunk(condition, nsamp, t_start_sec)
+        if ch is not None:
+            return ch
+    except Exception:
+        pass
     t = np.arange(nsamp) / SAMPLING_RATE + t_start_sec
     # Frequency bands representative tones
     alpha_f = [10.0, 9.0, 10.5, 8.5]
@@ -367,13 +509,14 @@ def generate_demo_chunk(condition: str, nsamp: int, t_start_sec: float = 0.0) ->
 
 
 def generate_demo_signal(condition: str, duration_sec: int) -> np.ndarray:
+    # Prefer a real recording slice; fallback to synthetic if needed
+    real = get_real_demo_signal(condition, duration_sec)
+    if real is not None:
+        return real
     nsamp = duration_sec * SAMPLING_RATE
-    # Build in 1s chunks for realism
-    chunks = []
-    for s in range(duration_sec):
-        chunks.append(generate_demo_chunk(condition, SAMPLING_RATE, t_start_sec=float(s)))
+    chunks = [generate_demo_chunk(condition, SAMPLING_RATE, t_start_sec=float(s)) for s in range(duration_sec)]
     full = np.concatenate(chunks, axis=1)
-    return full.T  # shape (n_samples, 4)
+    return full.T
 
 
 def make_feature_names_30() -> list[str]:
@@ -518,6 +661,47 @@ def load_models():
             st.warning(f"Failed to load QSUP model: {e}")
 
     return mlp_model, pca_model, gcn_model, qsup_model
+
+
+# Optional: preprocessors (scalers) for MLP/QSUP if available
+@st.cache_resource(show_spinner=False)
+def load_preprocessors():
+    mlp_scaler = None
+    qsup_scaler = None
+    if joblib is not None:
+        for name in ("mlp_scaler.joblib", "scaler_mlp.joblib"):
+            p = os.path.join(MODELS_DIR, name)
+            if os.path.exists(p):
+                try:
+                    mlp_scaler = joblib.load(p)
+                    break
+                except Exception:
+                    pass
+        for name in ("qsup_scaler.joblib", "scaler_qsup.joblib"):
+            p = os.path.join(MODELS_DIR, name)
+            if os.path.exists(p):
+                try:
+                    qsup_scaler = joblib.load(p)
+                    break
+                except Exception:
+                    pass
+    return mlp_scaler, qsup_scaler
+
+
+def adaptive_scale(x: np.ndarray, hist: list[np.ndarray]) -> np.ndarray:
+    """Scale 1xD vector using history statistics if available, else L2 norm.
+    x: shape (1, D). hist: list of arrays of shape (D,)
+    """
+    eps = 1e-8
+    if len(hist) >= 10:
+        H = np.vstack(hist[-200:])  # last 200 samples
+        mu = H.mean(axis=0)
+        std = H.std(axis=0)
+        std[std < 1e-6] = 1.0
+        return (x - mu) / std
+    # Fallback: L2 normalize
+    norm = np.linalg.norm(x)
+    return x / (norm + eps)
 
 
 def ensure_4ch_20s(signal_arr: np.ndarray) -> np.ndarray:
@@ -686,6 +870,7 @@ with st.sidebar:
     st.caption("Models loaded from `trained_models/`")
 
 mlp_model, pca_model, gcn_model, qsup_model = load_models()
+mlp_scaler, qsup_scaler = load_preprocessors()
 
 if page == "Home":
     st.subheader("Welcome to AlzDetect")
@@ -830,28 +1015,44 @@ if page == "Inference":
                                         gcn_emb = emb.cpu().numpy().reshape(1, -1)
                                 except Exception:
                                     pass
-                            full_vec = np.hstack([gf_30, gcn_emb])
+                        full_vec = np.hstack([gf_30, gcn_emb])
+                        # Maintain CCV history for adaptive scaling
+                        if "ccv_hist" not in st.session_state:
+                            st.session_state.ccv_hist = []
+                        st.session_state.ccv_hist.append(full_vec.flatten())
+                        if len(st.session_state.ccv_hist) > 500:
+                            st.session_state.ccv_hist = st.session_state.ccv_hist[-500:]
                             pred_text = ""
                             mlp_conf_val = None
                             qsup_conf_val = None
-                            if mlp_model is not None:
-                                try:
-                                    proba = mlp_model.predict_proba(full_vec)[0]
-                                    mlp_conf_val = float(proba[1])
-                                    pred = int(mlp_conf_val >= 0.5)
-                                    pred_text += f"MLP: {pred} (conf {mlp_conf_val:.2f})  "
-                                except Exception:
-                                    pass
-                            if TORCH_AVAILABLE and qsup_model is not None:
-                                try:
-                                    with torch.no_grad():
-                                        logits = qsup_model(torch.tensor(full_vec, dtype=torch.float))
-                                        p = torch.softmax(logits, dim=1).cpu().numpy()[0]
-                                        qsup_conf_val = float(p[1])
-                                        pred = int(qsup_conf_val >= 0.5)
-                                        pred_text += f"QSUP: {pred} (conf {qsup_conf_val:.2f})  "
-                                except Exception:
-                                    pass
+                        if mlp_model is not None:
+                            try:
+                                x_in = full_vec
+                                if mlp_scaler is not None:
+                                    x_in = mlp_scaler.transform(x_in)
+                                else:
+                                    x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
+                                proba = mlp_model.predict_proba(x_in)[0]
+                                mlp_conf_val = float(proba[1])
+                                pred = int(mlp_conf_val >= 0.5)
+                                pred_text += f"MLP: {pred} (conf {mlp_conf_val:.2f})  "
+                            except Exception:
+                                pass
+                        if TORCH_AVAILABLE and qsup_model is not None:
+                            try:
+                                with torch.no_grad():
+                                    x_in = full_vec
+                                    if qsup_scaler is not None:
+                                        x_in = qsup_scaler.transform(x_in)
+                                    else:
+                                        x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
+                                    logits = qsup_model(torch.tensor(x_in, dtype=torch.float))
+                                    p = torch.softmax(logits, dim=1).cpu().numpy()[0]
+                                    qsup_conf_val = float(p[1])
+                                    pred = int(qsup_conf_val >= 0.5)
+                                    pred_text += f"QSUP: {pred} (conf {qsup_conf_val:.2f})  "
+                            except Exception:
+                                pass
                             pred_text += f"Energy: {compute_energy(gf_30[0]):.1f}"
                             pred_ph.info(pred_text)
                             t_sec = st.session_state.t_idx / SAMPLING_RATE
@@ -953,12 +1154,22 @@ if page == "Inference":
                         except Exception:
                             pass
                     full_vec = np.hstack([gf_30, gcn_emb])
+                    if "ccv_hist" not in st.session_state:
+                        st.session_state.ccv_hist = []
+                    st.session_state.ccv_hist.append(full_vec.flatten())
+                    if len(st.session_state.ccv_hist) > 500:
+                        st.session_state.ccv_hist = st.session_state.ccv_hist[-500:]
                     pred_text = ""
                     mlp_conf_val = None
                     qsup_conf_val = None
                     if mlp_model is not None:
                         try:
-                            proba = mlp_model.predict_proba(full_vec)[0]
+                            x_in = full_vec
+                            if mlp_scaler is not None:
+                                x_in = mlp_scaler.transform(x_in)
+                            else:
+                                x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
+                            proba = mlp_model.predict_proba(x_in)[0]
                             mlp_conf_val = float(proba[1])
                             pred = int(mlp_conf_val >= 0.5)
                             pred_text += f"MLP: {pred} (conf {mlp_conf_val:.2f})  "
@@ -967,7 +1178,12 @@ if page == "Inference":
                     if TORCH_AVAILABLE and qsup_model is not None:
                         try:
                             with torch.no_grad():
-                                logits = qsup_model(torch.tensor(full_vec, dtype=torch.float))
+                                x_in = full_vec
+                                if qsup_scaler is not None:
+                                    x_in = qsup_scaler.transform(x_in)
+                                else:
+                                    x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
+                                logits = qsup_model(torch.tensor(x_in, dtype=torch.float))
                                 p = torch.softmax(logits, dim=1).cpu().numpy()[0]
                                 qsup_conf_val = float(p[1])
                                 pred = int(qsup_conf_val >= 0.5)
@@ -1042,6 +1258,13 @@ if page == "Inference":
 
             full_vec = np.hstack([gf_30, gcn_emb])  # (1, 62)
 
+            # Maintain CCV history for adaptive scaling
+            if "ccv_hist" not in st.session_state:
+                st.session_state.ccv_hist = []
+            st.session_state.ccv_hist.append(full_vec.flatten())
+            if len(st.session_state.ccv_hist) > 500:
+                st.session_state.ccv_hist = st.session_state.ccv_hist[-500:]
+
             # PCA for visualization (optional)
             pc1, pc2 = 0.0, 0.0
             if pca_model is not None:
@@ -1055,7 +1278,12 @@ if page == "Inference":
             pred_mlp = conf_mlp = None
             if mlp_model is not None:
                 try:
-                    proba = mlp_model.predict_proba(full_vec)[0]
+                    x_in = full_vec
+                    if mlp_scaler is not None:
+                        x_in = mlp_scaler.transform(x_in)
+                    else:
+                        x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
+                    proba = mlp_model.predict_proba(x_in)[0]
                     conf_mlp = float(proba[1])
                     pred_mlp = int(conf_mlp >= 0.5)
                 except Exception as e:
@@ -1065,7 +1293,12 @@ if page == "Inference":
             if TORCH_AVAILABLE and qsup_model is not None:
                 try:
                     with torch.no_grad():
-                        logits = qsup_model(torch.tensor(full_vec, dtype=torch.float))
+                        x_in = full_vec
+                        if qsup_scaler is not None:
+                            x_in = qsup_scaler.transform(x_in)
+                        else:
+                            x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
+                        logits = qsup_model(torch.tensor(x_in, dtype=torch.float))
                         p = torch.softmax(logits, dim=1).cpu().numpy()[0]
                         conf_qsup = float(p[1])
                         pred_qsup = int(conf_qsup >= 0.5)
