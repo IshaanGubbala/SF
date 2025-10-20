@@ -325,6 +325,148 @@ def compute_energy(feats_vec_30: np.ndarray) -> float:
 
 
 # -----------------------------
+# Simulation helpers (Healthy vs Alzheimer's)
+# -----------------------------
+def generate_demo_chunk(condition: str, nsamp: int, t_start_sec: float = 0.0) -> np.ndarray:
+    """Generate a 4xnsamp synthetic EEG chunk.
+    condition: 'Healthy' or 'Alzheimer\'s'
+    """
+    t = np.arange(nsamp) / SAMPLING_RATE + t_start_sec
+    # Frequency bands representative tones
+    alpha_f = [10.0, 9.0, 10.5, 8.5]
+    theta_f = [6.0, 5.5, 6.5, 6.2]
+    delta_f = [2.0, 2.5, 1.8, 2.2]
+    beta_f  = [18.0, 16.0, 20.0, 22.0]
+
+    if condition == "Alzheimer's":
+        alpha_amp = 8.0
+        theta_amp = 14.0
+        delta_amp = 9.0
+        beta_amp  = 3.0
+        noise_std = 0.8
+    else:  # Healthy
+        alpha_amp = 20.0
+        theta_amp = 4.0
+        delta_amp = 2.0
+        beta_amp  = 7.0
+        noise_std = 1.8
+
+    out = []
+    for ch in range(NUM_CHANNELS):
+        # Mild amplitude modulation
+        mod = 1.0 + 0.1 * np.sin(2 * np.pi * 0.2 * t + ch)
+        sig = (
+            alpha_amp * np.sin(2 * np.pi * alpha_f[ch] * t) +
+            theta_amp * np.sin(2 * np.pi * theta_f[ch] * t + 0.3) +
+            delta_amp * np.sin(2 * np.pi * delta_f[ch] * t + 0.6) +
+            beta_amp  * np.sin(2 * np.pi * beta_f[ch]  * t + 0.1)
+        ) * mod
+        sig += noise_std * np.random.randn(nsamp)
+        out.append(sig.astype(np.float32))
+    return np.stack(out, axis=0)
+
+
+def generate_demo_signal(condition: str, duration_sec: int) -> np.ndarray:
+    nsamp = duration_sec * SAMPLING_RATE
+    # Build in 1s chunks for realism
+    chunks = []
+    for s in range(duration_sec):
+        chunks.append(generate_demo_chunk(condition, SAMPLING_RATE, t_start_sec=float(s)))
+    full = np.concatenate(chunks, axis=1)
+    return full.T  # shape (n_samples, 4)
+
+
+def make_feature_names_30() -> list[str]:
+    chs = ["F3", "F4", "P3", "O2"]
+    names = []
+    for c in chs:
+        names.extend([
+            f"{c}_alpha_ratio",
+            f"{c}_spectral_entropy",
+            f"{c}_hj_activity",
+            f"{c}_hj_mobility",
+            f"{c}_hj_complexity",
+        ])
+    names.extend([
+        "alpha_mean","alpha_std","entropy_mean","entropy_std",
+        "hj_act_mean","hj_act_std","hj_mob_mean","hj_mob_std","hj_comp_mean","hj_comp_std",
+    ])
+    return names
+
+
+def mlp_first_layer_repr(mlp, X: np.ndarray) -> np.ndarray | None:
+    try:
+        if not hasattr(mlp, "coefs_"):
+            return None
+        W1 = mlp.coefs_[0]  # shape (n_features, n_hidden1)
+        b1 = mlp.intercepts_[0]  # shape (n_hidden1,)
+        z1 = X @ W1 + b1
+        # activation 'logistic' in this project
+        a1 = 1.0 / (1.0 + np.exp(-z1))
+        return a1.squeeze(0)
+    except Exception:
+        return None
+
+
+def qsup_probs_repr(model, X: np.ndarray) -> np.ndarray | None:
+    if not TORCH_AVAILABLE or model is None:
+        return None
+    try:
+        with torch.no_grad():
+            x_t = torch.tensor(X, dtype=torch.float)
+            # Re-implement internal steps to extract 'probs'
+            hidden_dim = model.hidden_dim
+            eps = 1e-8
+            wave_r_list = []
+            wave_i_list = []
+            for s in range(model.num_wavefunctions):
+                out = model.wavefunction_nets[s](x_t)
+                out = torch.exp(-out * out)
+                alpha = out[:, :hidden_dim]
+                beta  = out[:, hidden_dim:]
+                norm_sq = torch.sum(alpha**2 + beta**2, dim=1, keepdim=True) + eps
+                factor = torch.sqrt((model.partial_norm**2) / norm_sq)
+                alpha = alpha * factor
+                beta  = beta  * factor
+                phase = model.phases[s].unsqueeze(0) if model.phase_per_dim else model.phases[s]
+                wave_r = alpha * torch.cos(phase) - beta * torch.sin(phase)
+                wave_i = alpha * torch.sin(phase) + beta * torch.cos(phase)
+                wave_r_list.append(wave_r)
+                wave_i_list.append(wave_i)
+            real_stack = torch.stack(wave_r_list, dim=1)
+            imag_stack = torch.stack(wave_i_list, dim=1)
+            mean_real = torch.mean(real_stack, dim=1)
+            mean_norm = torch.sqrt(torch.sum(mean_real**2, dim=1, keepdim=True)) + eps
+            mean_norm = mean_norm.unsqueeze(1)
+            wave_norms = torch.sqrt(torch.sum(real_stack**2, dim=2, keepdim=True)) + eps
+            dot_prod = torch.sum(real_stack * mean_real.unsqueeze(1), dim=2, keepdim=True)
+            cosine_sim = dot_prod / (wave_norms * mean_norm)
+            cosine_sim = cosine_sim.squeeze(2)
+            interference_weights = torch.softmax(cosine_sim, dim=1).unsqueeze(2)
+            sup_real = torch.sum(real_stack * interference_weights, dim=1)
+            sup_imag = torch.sum(imag_stack * interference_weights, dim=1)
+            if getattr(model, "gating_net", None) is not None:
+                for _ in range(model.self_modulation_steps):
+                    mag = torch.sqrt(sup_real**2 + sup_imag**2 + eps)
+                    gate = torch.sigmoid(model.gating_net(mag))
+                    sup_real = sup_real * gate
+                    sup_imag = sup_imag * gate
+            mag_sq = sup_real**2 + sup_imag**2
+            if model.topk > 0 and model.topk < hidden_dim:
+                vals, inds = torch.topk(mag_sq, model.topk, dim=1)
+                mask = torch.zeros_like(mag_sq).scatter_(1, inds, 1.0)
+                masked = mag_sq * mask
+                sums = torch.sum(masked, dim=1, keepdim=True) + eps
+                probs = masked / sums
+            else:
+                sums = torch.sum(mag_sq, dim=1, keepdim=True) + eps
+                probs = mag_sq / sums
+        return probs.cpu().numpy().squeeze(0)
+    except Exception:
+        return None
+
+
+# -----------------------------
 # Model loading
 # -----------------------------
 @st.cache_resource(show_spinner=False)
@@ -622,16 +764,8 @@ if page == "Inference":
                     eeg_array = np.load(by)
         elif mode == "Demo signal":
             dur = st.slider("Demo duration (seconds)", min_value=5, max_value=600, value=60, step=5)
-            nsamp = dur * SAMPLING_RATE
-            t = np.arange(nsamp) / SAMPLING_RATE
-            # Simple synthetic EEG: 4 sinusoids + noise
-            sigs = []
-            freqs = [10, 9, 12, 8]
-            for k in range(4):
-                sig = 20 * np.sin(2 * np.pi * freqs[k] * t) + 2 * np.random.randn(nsamp)
-                sigs.append(sig.astype(np.float32))
-            eeg_array = np.stack(sigs, axis=0)
-            eeg_array = eeg_array.T  # shape (n_samples, 4)
+            cond = st.radio("Simulated condition", ["Healthy", "Alzheimer's"], horizontal=True)
+            eeg_array = generate_demo_signal(cond, dur)
         elif mode == "Live demo":
             # Initialize / controls
             if "live_running" not in st.session_state:
@@ -640,6 +774,7 @@ if page == "Inference":
                 st.session_state.t_idx = 0
                 st.session_state.conf_hist = []
                 st.session_state.last_tick = 0.0
+            cond = st.radio("Simulated condition", ["Healthy", "Alzheimer's"], horizontal=True)
             dur_total = st.slider("Total live duration (seconds)", 10, 900, 120, step=10)
             view_secs = st.slider("Chart window (seconds)", 5, 60, 20, step=5)
             plot_rate = st.slider("Plot rate (Hz)", 16, 128, 64, step=16)
@@ -663,13 +798,8 @@ if page == "Inference":
                 try:
                     for _ in range(dur_total):
                         nsamp = SAMPLING_RATE
-                        t0 = np.arange(nsamp) / SAMPLING_RATE + (st.session_state.t_idx / SAMPLING_RATE)
-                        freqs = [10, 9, 12, 8]
-                        chunk = []
-                        for k in range(4):
-                            sig = 20 * np.sin(2 * np.pi * freqs[k] * t0) + 2 * np.random.randn(nsamp)
-                            chunk.append(sig.astype(np.float32))
-                        chunk = np.stack(chunk, axis=0)
+                        t0_sec = (st.session_state.t_idx / SAMPLING_RATE)
+                        chunk = generate_demo_chunk(cond, nsamp, t_start_sec=t0_sec)
                         st.session_state.live_buf = np.concatenate((st.session_state.live_buf, chunk), axis=1)
                         st.session_state.t_idx += nsamp
 
@@ -954,8 +1084,33 @@ if page == "Inference":
             with met_cols[2]:
                 st.metric("Energy", value=f"{compute_energy(gf_30[0]):.1f}")
 
-            with st.expander("Feature vector (30 agg + 32 GCN)"):
-                st.write(full_vec.tolist())
+            with st.expander("Feature values (30 agg) and CCV (62)"):
+                try:
+                    import pandas as pd
+                    names30 = make_feature_names_30()
+                    df30 = pd.DataFrame([gf_30[0]], columns=names30)
+                    st.dataframe(df30, use_container_width=True)
+                except Exception:
+                    st.write(gf_30.tolist())
+                st.caption("CCV (62 dims): 30 aggregator + 32 GCN (zeros if GCN unavailable)")
+                st.bar_chart(full_vec.flatten(), height=160)
+
+            # Model representations
+            rep_cols = st.columns(2)
+            with rep_cols[0]:
+                st.markdown("**MLP first-layer activations**")
+                a1 = mlp_first_layer_repr(mlp_model, full_vec) if mlp_model is not None else None
+                if a1 is not None:
+                    st.bar_chart(a1, height=160)
+                else:
+                    st.caption("Not available.")
+            with rep_cols[1]:
+                st.markdown("**QSUP internal probabilities (probs)**")
+                qprob = qsup_probs_repr(qsup_model, full_vec) if (TORCH_AVAILABLE and qsup_model is not None) else None
+                if qprob is not None:
+                    st.bar_chart(qprob, height=160)
+                else:
+                    st.caption("Not available.")
 
             st.caption("PC1/PC2 (if PCA available): %.3f, %.3f" % (pc1, pc2))
 
