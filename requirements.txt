@@ -6,7 +6,8 @@ scikit-learn
 joblib
 
 # Optional (uncomment to enable PyTorch/QSUP/GCN locally or on a host that supports it):
-# torch --index-url https://download.pytorch.org/whl/cpu
+# Install CPU PyTorch so QSUP can run on Streamlit Cloud (requires Python 3.11)
+torch --index-url https://download.pytorch.org/whl/cpu
 # torch-geometric
 
 # Note: Streamlit Community Cloud may not support installing torch/torch-geometric.
