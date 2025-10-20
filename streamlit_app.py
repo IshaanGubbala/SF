@@ -49,17 +49,18 @@ SAMPLING_RATE = 256
 WINDOW_SECONDS = 20
 WINDOW_SAMPLES = SAMPLING_RATE * WINDOW_SECONDS
 
-FREQUENCY_BANDS_9 = {
-    "Delta":  (0.5, 4),
-    "Theta1": (4, 6),
-    "Theta2": (6, 8),
-    "Alpha1": (8,10),
-    "Alpha2": (10,12),
-    "Beta1":  (12,18),
-    "Beta2":  (18,22),
-    "Beta3":  (22,26),
-    "Beta4":  (26,30),
-}
+FREQUENCY_BANDS_9_LIST = [
+    ("Delta",  (0.5, 4)),
+    ("Theta1", (4, 6)),
+    ("Theta2", (6, 8)),
+    ("Alpha1", (8,10)),
+    ("Alpha2", (10,12)),
+    ("Beta1",  (12,18)),
+    ("Beta2",  (18,22)),
+    ("Beta3",  (22,26)),
+    ("Beta4",  (26,30)),
+]
+FREQUENCY_BANDS_9 = dict(FREQUENCY_BANDS_9_LIST)
 
 
 # -----------------------------

@@ -1,0 +1,13 @@
+streamlit>=1.50.0
+numpy
+pandas
+scipy
+scikit-learn
+joblib
+
+# Optional (uncomment to enable PyTorch/QSUP/GCN locally or on a host that supports it):
+# torch --index-url https://download.pytorch.org/whl/cpu
+# torch-geometric
+
+# Note: Streamlit Community Cloud may not support installing torch/torch-geometric.
+# For full QSUP/GCN support, consider deploying on Render/Railway/HF Spaces with a custom image.
