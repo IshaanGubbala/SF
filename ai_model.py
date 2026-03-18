@@ -139,6 +139,53 @@ def load_saved_features():
     return X_handcrafted, X_gnn, labels, ch_names_list, subj_ids
 
 #############################################
+# 2b) EXTRA FEATURES FROM GNN BAND-POWER MATRIX
+#############################################
+def extract_extra_features_from_gnn(gnn_feat: np.ndarray) -> np.ndarray:
+    """
+    Extract 42 engineered features from an (N_ch, 9) band-power matrix.
+    Channel-count-agnostic: all features are aggregated across channels,
+    so the output is always 42-dim whether N_ch=4 (live inference) or 19 (training).
+
+    Band column order (matches process_server.py FREQUENCY_BANDS):
+      0:Delta(0.5-4), 1:Theta1(4-6), 2:Theta2(6-8), 3:Alpha1(8-10), 4:Alpha2(10-12),
+      5:Beta1(12-20), 6:Beta2(20-30), 7:Gamma1(30-40), 8:Gamma2(40-50)
+
+    Returns 42-dim float32 vector:
+      - per-band mean across channels          (9)
+      - per-band std across channels           (9)
+      - log1p of per-band mean                 (9)
+      - normalized band powers (band/total)    (9)
+      - 6 clinically-motivated band ratios     (6)
+    """
+    eps = 1e-12
+    band_means = np.mean(gnn_feat, axis=0).astype(np.float64)   # (9,)
+    band_stds  = np.std(gnn_feat,  axis=0).astype(np.float64)   # (9,)
+    log_means  = np.log1p(np.clip(band_means, 0, None))          # (9,)
+
+    total_mean = float(np.sum(band_means)) + eps
+    norm_bands = band_means / total_mean                          # (9,)
+
+    delta = band_means[0]
+    theta = band_means[1] + band_means[2]
+    alpha = band_means[3] + band_means[4]
+    beta  = band_means[5] + band_means[6]
+    gamma = band_means[7] + band_means[8]
+
+    ratios = np.array([
+        theta / (alpha + eps),                 # theta/alpha — elevated in AD
+        alpha / (beta  + eps),                 # alpha/beta
+        delta / (alpha + eps),                 # delta/alpha — elevated in AD
+        (alpha + theta) / (total_mean + eps),  # slow-band fraction
+        delta / (total_mean + eps),            # delta fraction
+        gamma / (beta  + eps),                 # high-freq ratio
+    ], dtype=np.float64)
+
+    return np.concatenate([
+        band_means, band_stds, log_means, norm_bands, ratios
+    ]).astype(np.float32)   # 9+9+9+9+6 = 42
+
+#############################################
 # 3) GCN MODEL & DATASET (PyTorch)
 #############################################
 class GCNNet(nn.Module):
@@ -945,7 +992,188 @@ def cv_classification_ExtendedQSUP(CCV, y):
             qsup_histories, fold_accuracies, fold_aucs, best_qsup_model, best_qsup_scaler)
 
 #############################################
-# 8) VISUALIZATION FUNCTIONS
+# 8) END-TO-END MLP + GCN TRAINING
+#    MLP loss backpropagates through the GCN,
+#    updating both sets of weights jointly.
+#############################################
+def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
+               input_dim, device, epochs=100, patience=20):
+    """
+    Joint GCN + MLP training: MLP loss gradients flow all the way back through the GCN.
+    No SMOTE (synthetic samples lack graph structure).
+    Uses class-weighted CE + mixup for regularisation.
+
+    Algorithm per fold:
+      1. Clone pre-trained GCN as starting point.
+      2. Fit a StandardScaler on the full CCV (HC + extra + frozen GCN embs).
+      3. Each epoch: forward GCN differentiably → scale embs → concat with
+         pre-scaled HC+extra → MLP → loss → backward → both GCN and MLP update.
+      4. Save best MLP + GCN by val loss; evaluate by AUC.
+    """
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
+    all_y_true, all_y_pred, all_y_proba = [], [], []
+    fold_accuracies, fold_aucs = [], []
+
+    best_val_auc = -1.0
+    best_mlp_state = None
+    best_gcn_state = None
+    best_scaler = None
+    num_classes = len(np.unique(y))
+
+    fold_idx = 1
+    for train_idx, test_idx in skf.split(X_handcrafted, y):
+        HC_tr  = X_handcrafted[train_idx]
+        ex_tr  = X_extra[train_idx]
+        y_tr   = y[train_idx]
+        HC_val = X_handcrafted[test_idx]
+        ex_val = X_extra[test_idx]
+        y_val  = y[test_idx]
+
+        pyg_train_list = [pyg_dataset[i] for i in train_idx]
+        pyg_val_list   = [pyg_dataset[i] for i in test_idx]
+
+        # --- Fit scaler using initial frozen embeddings ---
+        gcn = copy.deepcopy(gcn_init).to(device)
+        gcn.eval()
+        with torch.no_grad():
+            init_loader = PyGDataLoader(pyg_dataset, batch_size=len(pyg_dataset), shuffle=False)
+            for d in init_loader:
+                d = d.to(device)
+                all_init_emb = gcn.embed(d.x, d.edge_index, d.batch).cpu().numpy()
+
+        init_CCV_tr = np.hstack([HC_tr, ex_tr, all_init_emb[train_idx]])
+        scaler = StandardScaler()
+        scaler.fit(init_CCV_tr)
+
+        # Split scaler params: first 72 dims = HC+extra, last 64 = GCN embs
+        base_dim = HC_tr.shape[1] + ex_tr.shape[1]   # 72
+        base_mean  = scaler.mean_[:base_dim]
+        base_scale = scaler.scale_[:base_dim]
+        emb_mean_np  = scaler.mean_[base_dim:]
+        emb_scale_np = scaler.scale_[base_dim:]
+
+        # Pre-scale the static HC+extra tensors
+        HC_ex_tr_s  = ((np.hstack([HC_tr, ex_tr])  - base_mean) / (base_scale + 1e-8)).astype(np.float32)
+        HC_ex_val_s = ((np.hstack([HC_val, ex_val]) - base_mean) / (base_scale + 1e-8)).astype(np.float32)
+
+        X_base_t   = torch.tensor(HC_ex_tr_s, dtype=torch.float, device=device)
+        y_tr_t     = torch.tensor(y_tr,       dtype=torch.long,  device=device)
+        emb_mean_t = torch.tensor(emb_mean_np,  dtype=torch.float, device=device)
+        emb_std_t  = torch.tensor(emb_scale_np, dtype=torch.float, device=device)
+
+        # --- Build fresh MLP and joint optimizer ---
+        mlp = TorchMLP(input_dim, num_classes).to(device)
+        class_weights = compute_class_weights(y_tr, device)
+        loss_fn   = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
+        optimizer = AdamW(
+            list(mlp.parameters()) + list(gcn.parameters()),
+            lr=3e-4, weight_decay=5e-4
+        )
+        scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
+
+        best_val_loss  = float('inf')
+        best_epoch     = 0
+        best_state_pair = None
+
+        for epoch in range(1, epochs + 1):
+            gcn.train(); mlp.train()
+            optimizer.zero_grad()
+
+            # Forward GCN on training graphs — DIFFERENTIABLE
+            tr_loader = PyGDataLoader(pyg_train_list, batch_size=len(pyg_train_list), shuffle=False)
+            for batch_data in tr_loader:
+                batch_data = batch_data.to(device)
+                emb = gcn.embed(batch_data.x, batch_data.edge_index, batch_data.batch)
+
+            # Differentiable normalisation of GCN embs (gradients flow through here)
+            emb_scaled = (emb - emb_mean_t) / (emb_std_t + 1e-8)
+            X_full = torch.cat([X_base_t, emb_scaled], dim=1)  # (N_train, input_dim)
+
+            mixed_x, y_a, y_b, lam = mixup_data(X_full, y_tr_t, alpha=0.2)
+            logits = mlp(mixed_x)
+            loss   = mixup_criterion(loss_fn, logits, y_a, y_b, lam)
+            loss.backward()   # <-- gradients flow: MLP → emb_scaled → gcn.embed()
+            torch.nn.utils.clip_grad_norm_(
+                list(mlp.parameters()) + list(gcn.parameters()), max_norm=1.0
+            )
+            optimizer.step()
+            scheduler.step()
+
+            # --- Validation ---
+            gcn.eval(); mlp.eval()
+            with torch.no_grad():
+                val_loader = PyGDataLoader(pyg_val_list, batch_size=len(pyg_val_list), shuffle=False)
+                for vd in val_loader:
+                    vd = vd.to(device)
+                    val_emb = gcn.embed(vd.x, vd.edge_index, vd.batch)
+                val_emb_s  = (val_emb - emb_mean_t) / (emb_std_t + 1e-8)
+                X_val_base = torch.tensor(HC_ex_val_s, dtype=torch.float, device=device)
+                X_val_full = torch.cat([X_val_base, val_emb_s], dim=1)
+                val_logits = mlp(X_val_full)
+                val_proba  = F.softmax(val_logits, dim=1).cpu().numpy()
+                val_loss   = log_loss(y_val, val_proba)
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_epoch    = epoch
+                best_state_pair = (copy.deepcopy(mlp.state_dict()), copy.deepcopy(gcn.state_dict()))
+            elif epoch - best_epoch >= patience:
+                print(f"  [E2E Fold {fold_idx}] Early stop at epoch {epoch} (best: {best_epoch})")
+                break
+
+        # Restore best states
+        if best_state_pair:
+            mlp.load_state_dict(best_state_pair[0])
+            gcn.load_state_dict(best_state_pair[1])
+
+        # --- Final fold evaluation ---
+        gcn.eval(); mlp.eval()
+        with torch.no_grad():
+            val_loader = PyGDataLoader(pyg_val_list, batch_size=len(pyg_val_list), shuffle=False)
+            for vd in val_loader:
+                vd = vd.to(device)
+                val_emb = gcn.embed(vd.x, vd.edge_index, vd.batch)
+            val_emb_s  = (val_emb - emb_mean_t) / (emb_std_t + 1e-8)
+            X_val_base = torch.tensor(HC_ex_val_s, dtype=torch.float, device=device)
+            X_val_full = torch.cat([X_val_base, val_emb_s], dim=1)
+            val_logits = mlp(X_val_full)
+            val_proba  = F.softmax(val_logits, dim=1).cpu().numpy()
+        val_preds = val_proba.argmax(axis=1)
+
+        fold_acc = accuracy_score(y_val, val_preds)
+        fold_auc = roc_auc_score(y_val, val_proba[:, 1])
+        fold_accuracies.append(fold_acc)
+        fold_aucs.append(fold_auc)
+        all_y_true.extend(y_val.tolist())
+        all_y_pred.extend(val_preds.tolist())
+        all_y_proba.extend(val_proba[:, 1].tolist())
+        print(f"  [E2E Fold {fold_idx}] Acc={fold_acc:.4f}  AUC={fold_auc:.4f}")
+
+        if fold_auc > best_val_auc:
+            best_val_auc   = fold_auc
+            best_mlp_state = copy.deepcopy(mlp.state_dict())
+            best_gcn_state = copy.deepcopy(gcn.state_dict())
+            best_scaler    = scaler
+        fold_idx += 1
+
+    overall_acc = accuracy_score(all_y_true, all_y_pred)
+    overall_auc = roc_auc_score(all_y_true, all_y_proba)
+    print(f"\n--- E2E MLP+GCN: Accuracy={overall_acc:.4f}  AUC={overall_auc:.4f} ---")
+
+    if best_mlp_state:
+        torch.save(best_mlp_state, os.path.join(MODELS_DIR, "mlp_e2e.pth"))
+        print(f"[E2E] Saved mlp_e2e.pth (best fold AUC={best_val_auc:.4f})")
+    if best_gcn_state:
+        torch.save(best_gcn_state, os.path.join(MODELS_DIR, "gcn_e2e.pth"))
+        print("[E2E] Saved gcn_e2e.pth")
+    if best_scaler:
+        joblib.dump(best_scaler, os.path.join(MODELS_DIR, "e2e_scaler.joblib"))
+
+    return (np.array(all_y_true), np.array(all_y_pred),
+            np.array(all_y_proba), fold_accuracies, fold_aucs)
+
+#############################################
+# 9) VISUALIZATION FUNCTIONS
 #############################################
 
 def plot_confusion_matrices(all_y_true_mlp, all_y_pred_mlp, all_y_true_qsup, all_y_pred_qsup):
@@ -1156,6 +1384,10 @@ def main():
     print(f"[INFO] Handcrafted shape: {X_handcrafted.shape}")
     print(f"[INFO] {len(X_gnn)} GNN feature matrices loaded.")
 
+    # 1b) Extract engineered features from GNN band-power matrices (42 dims each)
+    X_extra = np.stack([extract_extra_features_from_gnn(g) for g in X_gnn], axis=0)
+    print(f"[INFO] Extra GNN features shape: {X_extra.shape}")   # (N, 42)
+
     # 2) Build PyG dataset for GCN
     pyg_dataset = create_pyg_dataset(X_gnn, y, ch_names_list)
     if len(pyg_dataset) == 0:
@@ -1172,7 +1404,7 @@ def main():
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     in_channels = X_gnn[0].shape[1]
-    hidden_channels = 32
+    hidden_channels = 64          # expanded from 32 for richer embeddings
     gcn_num_classes = 2
     gcn_model = GCNNet(in_channels, hidden_channels, gcn_num_classes).to(device)
 
@@ -1250,16 +1482,23 @@ def main():
     embeddings = np.vstack(embeddings)
     print(f"[INFO] GCN embeddings shape: {embeddings.shape}")
 
-    # Combine => CCV
+    # Combine => CCV (30 handcrafted + 42 extra GNN + 64 GCN embeddings = 136 dims)
     if X_handcrafted.shape[0] != embeddings.shape[0]:
         raise ValueError("Mismatch between handcrafted features and GCN embeddings!")
-    CCV = np.hstack((X_handcrafted, embeddings))
-    print(f"[INFO] Final CCV shape: {CCV.shape}")
+    CCV = np.hstack((X_handcrafted, X_extra, embeddings))
+    print(f"[INFO] Final CCV shape: {CCV.shape}")   # (N, 136)
 
     # Build feature names for visualization
     handcrafted_names = [f"HC_{i}" for i in range(X_handcrafted.shape[1])]
+    extra_names = (
+        [f"bp_mean_{i}" for i in range(9)] +
+        [f"bp_std_{i}"  for i in range(9)] +
+        [f"bp_log_{i}"  for i in range(9)] +
+        [f"bp_norm_{i}" for i in range(9)] +
+        ["theta_alpha", "alpha_beta", "delta_alpha", "slow_total", "delta_total", "gamma_beta"]
+    )
     gcn_emb_names = [f"GCN_{i}" for i in range(embeddings.shape[1])]
-    feature_names = handcrafted_names + gcn_emb_names
+    feature_names = handcrafted_names + extra_names + gcn_emb_names
 
     # 5-fold classification with MLP
     print("\n=== 5-Fold Classification with MLP (PyTorch) ===")
@@ -1272,6 +1511,15 @@ def main():
      qsup_histories, qsup_fold_accs, qsup_fold_aucs,
      best_qsup_model, best_qsup_scaler) = cv_classification_ExtendedQSUP(CCV, y)
 
+    # ===== E2E JOINT GCN+MLP TRAINING =====
+    print("\n=== End-to-End Joint GCN+MLP Training (backprop through GCN) ===")
+    (e2e_y_true, e2e_y_pred, e2e_y_proba,
+     e2e_fold_accs, e2e_fold_aucs) = cv_mlp_e2e(
+        X_handcrafted, X_extra, pyg_dataset, y,
+        gcn_init=gcn_model, input_dim=CCV.shape[1], device=device,
+        epochs=100, patience=20
+    )
+
     # ===== VISUALIZATIONS =====
     print("\n=== Generating Visualizations ===")
 
@@ -1283,7 +1531,6 @@ def main():
 
     # c) QSUP internals
     if best_qsup_model is not None and best_qsup_scaler is not None:
-        # Use a sample of scaled CCV for visualization
         X_sample = best_qsup_scaler.transform(CCV)
         plot_qsup_internals(best_qsup_model, X_sample[:20], feature_names=feature_names)
 
@@ -1298,35 +1545,43 @@ def main():
     plot_roc_comparison(mlp_y_true, mlp_y_proba, qsup_y_proba)
 
     # ===== FINAL SUMMARY TABLE =====
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 80)
     print("FINAL SUMMARY: Per-Fold Accuracy and AUC")
-    print("=" * 70)
-    print(f"{'Fold':<8} {'MLP Acc':<12} {'MLP AUC':<12} {'QSUP Acc':<12} {'QSUP AUC':<12}")
-    print("-" * 70)
-    n_folds = max(len(mlp_fold_accs), len(qsup_fold_accs))
+    print("=" * 80)
+    print(f"{'Fold':<6} {'MLP Acc':<11} {'MLP AUC':<11} {'QSUP Acc':<11} {'QSUP AUC':<11} {'E2E Acc':<11} {'E2E AUC':<11}")
+    print("-" * 80)
+    n_folds = 5
     for i in range(n_folds):
-        mlp_acc_str = f"{mlp_fold_accs[i]:.4f}" if i < len(mlp_fold_accs) else "N/A"
-        mlp_auc_str = f"{mlp_fold_aucs[i]:.4f}" if i < len(mlp_fold_aucs) else "N/A"
+        mlp_acc_str  = f"{mlp_fold_accs[i]:.4f}"  if i < len(mlp_fold_accs)  else "N/A"
+        mlp_auc_str  = f"{mlp_fold_aucs[i]:.4f}"  if i < len(mlp_fold_aucs)  else "N/A"
         qsup_acc_str = f"{qsup_fold_accs[i]:.4f}" if i < len(qsup_fold_accs) else "N/A"
         qsup_auc_str = f"{qsup_fold_aucs[i]:.4f}" if i < len(qsup_fold_aucs) else "N/A"
-        print(f"{i+1:<8} {mlp_acc_str:<12} {mlp_auc_str:<12} {qsup_acc_str:<12} {qsup_auc_str:<12}")
-    print("-" * 70)
-    mlp_mean_acc = np.mean(mlp_fold_accs) if mlp_fold_accs else 0
-    mlp_mean_auc = np.mean(mlp_fold_aucs) if mlp_fold_aucs else 0
-    qsup_mean_acc = np.mean(qsup_fold_accs) if qsup_fold_accs else 0
-    qsup_mean_auc = np.mean(qsup_fold_aucs) if qsup_fold_aucs else 0
-    print(f"{'Mean':<8} {mlp_mean_acc:<12.4f} {mlp_mean_auc:<12.4f} {qsup_mean_acc:<12.4f} {qsup_mean_auc:<12.4f}")
-    print("=" * 70)
+        e2e_acc_str  = f"{e2e_fold_accs[i]:.4f}"  if i < len(e2e_fold_accs)  else "N/A"
+        e2e_auc_str  = f"{e2e_fold_aucs[i]:.4f}"  if i < len(e2e_fold_aucs)  else "N/A"
+        print(f"{i+1:<6} {mlp_acc_str:<11} {mlp_auc_str:<11} {qsup_acc_str:<11} {qsup_auc_str:<11} {e2e_acc_str:<11} {e2e_auc_str:<11}")
+    print("-" * 80)
+    print(f"{'Mean':<6} {np.mean(mlp_fold_accs):<11.4f} {np.mean(mlp_fold_aucs):<11.4f} "
+          f"{np.mean(qsup_fold_accs):<11.4f} {np.mean(qsup_fold_aucs):<11.4f} "
+          f"{np.mean(e2e_fold_accs):<11.4f} {np.mean(e2e_fold_aucs):<11.4f}")
+    print("=" * 80)
 
-    # ===== META-ENSEMBLE: MLP + QSUP =====
-    # Both used the same StratifiedKFold(random_state=5), so y_true arrays align
-    meta_proba = (np.array(mlp_y_proba) + np.array(qsup_y_proba)) / 2.0
-    meta_preds = (meta_proba >= 0.5).astype(int)
-    meta_acc = accuracy_score(mlp_y_true, meta_preds)
-    meta_auc = roc_auc_score(mlp_y_true, meta_proba)
-    print(f"\n{'META-ENSEMBLE (MLP+QSUP avg):':40s} Accuracy={meta_acc:.4f}  AUC={meta_auc:.4f}")
-    print(confusion_matrix(mlp_y_true, meta_preds))
-    print(classification_report(mlp_y_true, meta_preds, target_names=['Control', 'Alzheimer']))
+    # ===== META-ENSEMBLE: MLP + QSUP + E2E =====
+    # All three use StratifiedKFold(random_state=5) on same data → y_true arrays align.
+    # 2-model ensemble (MLP + QSUP)
+    meta2_proba = (np.array(mlp_y_proba) + np.array(qsup_y_proba)) / 2.0
+    meta2_preds = (meta2_proba >= 0.5).astype(int)
+    meta2_acc   = accuracy_score(mlp_y_true, meta2_preds)
+    meta2_auc   = roc_auc_score(mlp_y_true, meta2_proba)
+    print(f"\n{'META-ENSEMBLE-2 (MLP+QSUP):':42s} Accuracy={meta2_acc:.4f}  AUC={meta2_auc:.4f}")
+
+    # 3-model ensemble (MLP + QSUP + E2E)
+    meta3_proba = (np.array(mlp_y_proba) + np.array(qsup_y_proba) + np.array(e2e_y_proba)) / 3.0
+    meta3_preds = (meta3_proba >= 0.5).astype(int)
+    meta3_acc   = accuracy_score(mlp_y_true, meta3_preds)
+    meta3_auc   = roc_auc_score(mlp_y_true, meta3_proba)
+    print(f"{'META-ENSEMBLE-3 (MLP+QSUP+E2E):':42s} Accuracy={meta3_acc:.4f}  AUC={meta3_auc:.4f}")
+    print(confusion_matrix(mlp_y_true, meta3_preds))
+    print(classification_report(mlp_y_true, meta3_preds, target_names=['Control', 'Alzheimer']))
 
     end_time = time.time()
     print(f"[DONE] total runtime: {end_time - start_time:.2f} seconds")

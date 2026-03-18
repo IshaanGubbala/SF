@@ -283,6 +283,28 @@ def channelwise_9feats(chunk_4ch: np.ndarray):
     return np.array(out, dtype=np.float32)
 
 
+def extract_extra_features_from_gnn(gnn_feat: np.ndarray) -> np.ndarray:
+    """
+    42-dim channel-aggregated features from (N_ch, 9) band-power matrix.
+    Channel-count-agnostic (works for 4-ch inference and 19-ch training).
+    """
+    eps = 1e-12
+    band_means = np.mean(gnn_feat, axis=0).astype(np.float64)
+    band_stds  = np.std(gnn_feat,  axis=0).astype(np.float64)
+    log_means  = np.log1p(np.clip(band_means, 0, None))
+    total_mean = float(np.sum(band_means)) + eps
+    norm_bands = band_means / total_mean
+    delta = band_means[0];  theta = band_means[1] + band_means[2]
+    alpha = band_means[3] + band_means[4]
+    beta  = band_means[5] + band_means[6]; gamma = band_means[7] + band_means[8]
+    ratios = np.array([
+        theta / (alpha + eps), alpha / (beta + eps), delta / (alpha + eps),
+        (alpha + theta) / (total_mean + eps), delta / (total_mean + eps),
+        gamma / (beta + eps),
+    ], dtype=np.float64)
+    return np.concatenate([band_means, band_stds, log_means, norm_bands, ratios]).astype(np.float32)
+
+
 def hjorth_params(sig):
     x = sig.flatten()
     act = np.var(x)
@@ -667,7 +689,7 @@ def load_models():
     # Try TorchMLP (.pth) first, fall back to sklearn (.pkl)
     if TORCH_AVAILABLE and os.path.exists(MLP_PTH_MODEL_PATH):
         try:
-            model = TorchMLP(input_dim=62, num_classes=2)
+            model = TorchMLP(input_dim=136, num_classes=2)
             sd = torch.load(MLP_PTH_MODEL_PATH, map_location="cpu", weights_only=True)
             model.load_state_dict(sd, strict=True)
             model.eval()
@@ -688,7 +710,7 @@ def load_models():
 
     if TORCH_AVAILABLE and PYG_AVAILABLE and os.path.exists(GCN_MODEL_PATH):
         try:
-            model = GCNNet(in_channels=9, hidden_channels=32, num_classes=2)
+            model = GCNNet(in_channels=9, hidden_channels=64, num_classes=2)
             sd = torch.load(GCN_MODEL_PATH, map_location="cpu")
             model.load_state_dict(sd, strict=False)
             model.eval()
@@ -701,7 +723,7 @@ def load_models():
         qsup_err1 = qsup_err2 = None
         try:
             model = ExtendedQSUP(
-                input_dim=62,
+                input_dim=136,
                 hidden_dim=48,
                 num_classes=2,
                 num_wavefunctions=8,
@@ -724,7 +746,7 @@ def load_models():
                     # Accept state_dict or full module
                     if isinstance(obj, dict):
                         model = ExtendedQSUP(
-                            input_dim=62,
+                            input_dim=136,
                             hidden_dim=48,
                             num_classes=2,
                             num_wavefunctions=8,
@@ -1096,7 +1118,8 @@ if page == "Inference":
                             last = st.session_state.live_buf[:, -WINDOW_SAMPLES:]
                             gf_30 = aggregator_30(last).reshape(1, 30)
                             node_feats = channelwise_9feats(last)
-                            gcn_emb = np.zeros((1, 32), dtype=np.float32)
+                            extra_42 = extract_extra_features_from_gnn(node_feats).reshape(1, 42)
+                            gcn_emb = np.zeros((1, 64), dtype=np.float32)
                             if TORCH_AVAILABLE and gcn_model is not None:
                                 try:
                                     A = adjacency_4ch()
@@ -1109,7 +1132,7 @@ if page == "Inference":
                                         gcn_emb = emb.cpu().numpy().reshape(1, -1)
                                 except Exception:
                                     pass
-                        full_vec = np.hstack([gf_30, gcn_emb])
+                        full_vec = np.hstack([gf_30, extra_42, gcn_emb])
                         # Maintain CCV history for adaptive scaling
                         if "ccv_hist" not in st.session_state:
                             st.session_state.ccv_hist = []
@@ -1232,7 +1255,8 @@ if page == "Inference":
                     last = st.session_state.play_buf[:, -WINDOW_SAMPLES:]
                     gf_30 = aggregator_30(last).reshape(1, 30)
                     node_feats = channelwise_9feats(last)
-                    gcn_emb = np.zeros((1, 32), dtype=np.float32)
+                    extra_42 = extract_extra_features_from_gnn(node_feats).reshape(1, 42)
+                    gcn_emb = np.zeros((1, 64), dtype=np.float32)
                     if TORCH_AVAILABLE and gcn_model is not None:
                         try:
                             A = adjacency_4ch()
@@ -1245,7 +1269,7 @@ if page == "Inference":
                                 gcn_emb = emb.cpu().numpy().reshape(1, -1)
                         except Exception:
                             pass
-                    full_vec = np.hstack([gf_30, gcn_emb])
+                    full_vec = np.hstack([gf_30, extra_42, gcn_emb])
                     if "ccv_hist" not in st.session_state:
                         st.session_state.ccv_hist = []
                     st.session_state.ccv_hist.append(full_vec.flatten())
@@ -1329,12 +1353,13 @@ if page == "Inference":
                 try:
                     gf_30 = aggregator_30(chunk).reshape(1, 30)
                     node_feats = channelwise_9feats(chunk)
+                    extra_42 = extract_extra_features_from_gnn(node_feats).reshape(1, 42)
                 except Exception as e:
                     st.error(f"Feature extraction failed: {e}")
                     st.stop()
 
             # Build GCN embedding if available
-            gcn_emb = np.zeros((1, 32), dtype=np.float32)
+            gcn_emb = np.zeros((1, 64), dtype=np.float32)
             if TORCH_AVAILABLE and gcn_model is not None:
                 try:
                     A = adjacency_4ch()
@@ -1348,7 +1373,7 @@ if page == "Inference":
                 except Exception as e:
                     st.warning(f"GCN embedding failed; using zeros. Reason: {e}")
 
-            full_vec = np.hstack([gf_30, gcn_emb])  # (1, 62)
+            full_vec = np.hstack([gf_30, extra_42, gcn_emb])  # (1, 136)
 
             # Maintain CCV history for adaptive scaling
             if "ccv_hist" not in st.session_state:

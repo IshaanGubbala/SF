@@ -4,9 +4,8 @@ server.py
 A FastAPI WebSocket server that:
  • Receives 4-channel cleaned EEG data (from the client) in 1-second chunks.
  • Maintains a 20-second rolling buffer (5120 samples at 256Hz).
- • Once the buffer is full, it computes 30 aggregator features (using alpha ratio, spectral entropy, Hjorth parameters)
-   and a 32-dimensional GCN embedding (from 9 subbands per channel) to form a 62-dimensional feature vector (CCV).
- • Feeds the CCV into pre-trained MLP and QSUP models (and optionally PCA) to produce predictions.
+ • Computes 30 aggregator features + 42 extra GNN features + 64 GCN embeddings = 136-dim CCV.
+ • Feeds the CCV into pre-trained MLP and QSUP models to produce predictions.
  • Returns a JSON response with predictions, aggregator features, PCA (pc1, pc2) and an energy measure.
  • Sends a static 3D energy landscape once upon client connection.
 """
@@ -74,6 +73,30 @@ class PredictionResponse(BaseModel):
 
 class EnergyLandscape(BaseModel):
     energy_landscape: Dict[str, List[float]]
+
+# ─── Extra engineered features from band-power matrix ───────────────────────
+def extract_extra_features_from_gnn(gnn_feat: np.ndarray) -> np.ndarray:
+    """
+    42-dim channel-aggregated features from (N_ch, 9) band-power matrix.
+    Works for any N_ch (4 during live inference, 19 during training).
+    Band order: Delta(0), Theta1(1), Theta2(2), Alpha1(3), Alpha2(4),
+                Beta1(5), Beta2(6), Gamma1(7), Gamma2(8)
+    """
+    eps = 1e-12
+    band_means = np.mean(gnn_feat, axis=0).astype(np.float64)
+    band_stds  = np.std(gnn_feat,  axis=0).astype(np.float64)
+    log_means  = np.log1p(np.clip(band_means, 0, None))
+    total_mean = float(np.sum(band_means)) + eps
+    norm_bands = band_means / total_mean
+    delta = band_means[0];  theta = band_means[1] + band_means[2]
+    alpha = band_means[3] + band_means[4]
+    beta  = band_means[5] + band_means[6]; gamma = band_means[7] + band_means[8]
+    ratios = np.array([
+        theta / (alpha + eps), alpha / (beta + eps), delta / (alpha + eps),
+        (alpha + theta) / (total_mean + eps), delta / (total_mean + eps),
+        gamma / (beta + eps),
+    ], dtype=np.float64)
+    return np.concatenate([band_means, band_stds, log_means, norm_bands, ratios]).astype(np.float32)
 
 # Model classes
 class GCNNet(nn.Module):
@@ -224,7 +247,7 @@ app.add_middleware(
 )
 
 try:
-    gcn_model = GCNNet(in_channels=9, hidden_channels=32, num_classes=2)
+    gcn_model = GCNNet(in_channels=9, hidden_channels=64, num_classes=2)
     sd_gcn = torch.load(GCN_MODEL_PATH, map_location="cpu")
     gcn_model.load_state_dict(sd_gcn, strict=True)
     gcn_model.eval()
@@ -237,7 +260,7 @@ mlp_model = None
 mlp_is_torch = False
 MLP_PTH_PATH = os.path.join(MODELS_DIR, "mlp_model.pth")
 try:
-    torch_mlp = TorchMLP(input_dim=62, num_classes=2)
+    torch_mlp = TorchMLP(input_dim=136, num_classes=2)
     sd_mlp = torch.load(MLP_PTH_PATH, map_location="cpu", weights_only=False)
     torch_mlp.load_state_dict(sd_mlp, strict=True)
     torch_mlp.eval()
@@ -255,7 +278,7 @@ except Exception as e:
 
 try:
     qsup_model = ExtendedQSUP(
-        input_dim=62, hidden_dim=48, num_classes=2,
+        input_dim=136, hidden_dim=48, num_classes=2,
         num_wavefunctions=8, partial_norm=1.5,
         phase_per_dim=True, self_modulation_steps=3, topk=12
     )
@@ -422,19 +445,20 @@ class ConnectionManager:
             self.buffer = self.buffer[:, -WINDOW_SAMPLES:]
         if self.buffer.shape[1] >= WINDOW_SAMPLES:
             gf_30 = aggregator_30(self.buffer).reshape(1, 30)
-            node_feats = channelwise_9feats(self.buffer)
+            node_feats = channelwise_9feats(self.buffer)   # (4, 9)
+            extra_42 = extract_extra_features_from_gnn(node_feats).reshape(1, 42)
             A = adjacency_4ch()
             edge_idx = np.array(np.nonzero(A))
             edge_idx = torch.tensor(edge_idx, dtype=torch.long)
             x_tensor = torch.tensor(node_feats, dtype=torch.float)
             batch = torch.zeros(x_tensor.shape[0], dtype=torch.long)
-            gcn_emb = np.zeros((1, 32), dtype=np.float32)
+            gcn_emb = np.zeros((1, 64), dtype=np.float32)
             if gcn_model:
                 with torch.no_grad():
                     data_obj = Data(x=x_tensor, edge_index=edge_idx, y=torch.zeros(1, dtype=torch.long), batch=batch)
                     emb = gcn_model.embed(data_obj.x, data_obj.edge_index, data_obj.batch)
                     gcn_emb = emb.cpu().numpy().reshape(1, -1)
-            full_vec = np.hstack([gf_30, gcn_emb])  # (1,62)
+            full_vec = np.hstack([gf_30, extra_42, gcn_emb])  # (1, 136)
             mlp_pred, mlp_conf = 0, 0.0
             if mlp_model:
                 try:
