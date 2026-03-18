@@ -7,6 +7,8 @@ Generate animated GIF visualizations for MLP and QSUP inference.
 """
 
 import os
+import glob
+import json
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,6 +21,7 @@ import matplotlib.animation as animation
 from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D
 import joblib
+import mne
 
 MODELS_DIR = "trained_models"
 PLOTS_DIR = "plots"
@@ -62,9 +65,20 @@ class ExtendedQSUP(nn.Module):
         self.self_modulation_steps = self_modulation_steps
         self.topk = topk
 
+        proj_dim = ((max(hidden_dim, input_dim // 2) + 7) // 8) * 8
+        self.use_proj = proj_dim < input_dim
+        if self.use_proj:
+            self.input_proj = nn.Sequential(
+                nn.Linear(input_dim, proj_dim),
+                nn.LayerNorm(proj_dim),
+                nn.GELU(),
+                nn.Dropout(0.1),
+            )
+        wf_input_dim = proj_dim if self.use_proj else input_dim
+
         self.wavefunction_nets = nn.ModuleList()
         for _ in range(num_wavefunctions):
-            layer = nn.Linear(input_dim, 2 * hidden_dim)
+            layer = nn.Linear(wf_input_dim, 2 * hidden_dim)
             layer = parametrizations.spectral_norm(layer)
             self.wavefunction_nets.append(layer)
 
@@ -93,8 +107,10 @@ class ExtendedQSUP(nn.Module):
 
     def forward_with_internals(self, x):
         eps = 1e-8
-        wave_r_list, wave_i_list, wave_magnitudes = [], [], []
+        if self.use_proj:
+            x = self.input_proj(x)
 
+        wave_r_list, wave_i_list, wave_magnitudes = [], [], []
         for s in range(self.num_wavefunctions):
             out = self.wavefunction_nets[s](x)
             out = self.layer_norms[s](out)
@@ -158,30 +174,60 @@ class ExtendedQSUP(nn.Module):
         }
 
 
+# ── Helper functions (mirrors ai_model.py) ──────────────────────────
+
+FREQUENCY_BANDS = {
+    "Delta": (0.5, 4), "Theta1": (4, 6), "Theta2": (6, 8),
+    "Alpha1": (8, 10), "Alpha2": (10, 12),
+    "Beta1": (12, 20), "Beta2": (20, 30),
+    "Gamma1": (30, 40), "Gamma2": (40, 50),
+}
+
+def extract_extra_features_from_gnn(gnn_feat):
+    eps = 1e-12
+    band_means = np.mean(gnn_feat, axis=0).astype(np.float64)
+    band_stds  = np.std(gnn_feat,  axis=0).astype(np.float64)
+    log_means  = np.log1p(np.clip(band_means, 0, None))
+    total_mean = float(np.sum(band_means)) + eps
+    norm_bands = band_means / total_mean
+    delta = band_means[0]
+    theta = band_means[1] + band_means[2]
+    alpha = band_means[3] + band_means[4]
+    beta  = band_means[5] + band_means[6]
+    gamma = band_means[7] + band_means[8]
+    ratios = np.array([
+        theta / (alpha + eps), alpha / (beta + eps),
+        delta / (alpha + eps), (alpha + theta) / (total_mean + eps),
+        delta / (total_mean + eps), gamma / (beta + eps),
+    ], dtype=np.float64)
+    return np.concatenate([band_means, band_stds, log_means, norm_bands, ratios]).astype(np.float32)
+
+
+def compute_adjacency_matrix(ch_names):
+    montage = mne.channels.make_standard_montage('standard_1020')
+    pos_dict = montage.get_positions()['ch_pos']
+    used = [ch for ch in ch_names if ch in pos_dict]
+    if not used:
+        return None
+    coords = np.array([pos_dict[ch] for ch in used])
+    from scipy.spatial.distance import pdist, squareform
+    D = squareform(pdist(coords))
+    threshold = np.percentile(D, 30)
+    A = (D < threshold).astype(np.float32)
+    np.fill_diagonal(A, 0)
+    return A
+
+
 # ── Load models and data ────────────────────────────────────────────
 
 def load_sample_data(n=20):
-    """Load a few CCV samples for visualization."""
-    import glob
-    import json
-
-    HANDCRAFTED_DIR = "processed_features/handcrafted"
-    GNN_DIR = "processed_features/gnn"
-
-    handcrafted_files = sorted(glob.glob(os.path.join(HANDCRAFTED_DIR, "*_handcrafted.npy")))[:n]
-    X_list = []
-    for f in handcrafted_files:
-        subj_id = os.path.basename(f).split('_')[0]
-        gnn_file = os.path.join(GNN_DIR, f"{subj_id}_gnn.npy")
-        if not os.path.exists(gnn_file):
-            continue
-        hc = np.load(f)
-        # For GCN embedding, we'd need the full pipeline. Use saved model instead.
-        X_list.append(hc)
-
-    # We need the GCN embeddings too. Load GCN and compute them.
+    """Load n CCV samples (136-dim: 30 handcrafted + 42 extra GNN + 64 GCN emb)."""
     from torch_geometric.nn import GCNConv, global_mean_pool
     from torch_geometric.data import Data
+
+    HANDCRAFTED_DIR = "processed_features/handcrafted"
+    GNN_DIR         = "processed_features/gnn"
+    CHANNELS_DIR    = "processed_features/channels"
 
     class GCNNet(nn.Module):
         def __init__(self, in_channels, hidden_channels, num_classes):
@@ -197,27 +243,44 @@ def load_sample_data(n=20):
             x = F.relu(self.conv3(x, edge_index))
             return global_mean_pool(x, batch)
 
-    gcn = GCNNet(9, 32, 2)
+    gcn = GCNNet(9, 64, 2)
     gcn.load_state_dict(torch.load(os.path.join(MODELS_DIR, "gcn_model.pth"), map_location="cpu"))
     gcn.eval()
 
-    A = np.ones((4, 4), dtype=np.float32)
-    np.fill_diagonal(A, 0)
-    edge_index = torch.tensor(np.array(np.nonzero(A)), dtype=torch.long)
-
+    handcrafted_files = sorted(glob.glob(os.path.join(HANDCRAFTED_DIR, "*_handcrafted.npy")))
     ccv_list = []
     for f in handcrafted_files:
+        if len(ccv_list) >= n:
+            break
         subj_id = os.path.basename(f).split('_')[0]
         gnn_file = os.path.join(GNN_DIR, f"{subj_id}_gnn.npy")
-        if not os.path.exists(gnn_file):
+        ch_file  = os.path.join(CHANNELS_DIR, f"{subj_id}_channels.json")
+        if not os.path.exists(gnn_file) or not os.path.exists(ch_file):
             continue
-        hc = np.load(f).astype(np.float32)
+        hc       = np.load(f).astype(np.float32)
         gnn_feat = np.load(gnn_file).astype(np.float32)
-        x_tensor = torch.tensor(gnn_feat, dtype=torch.float)
+        with open(ch_file) as fp:
+            ch_names = json.load(fp)
+
+        A = compute_adjacency_matrix(ch_names)
+        if A is None:
+            continue
+
+        extra = extract_extra_features_from_gnn(gnn_feat)
+
+        # Subset gnn_feat to valid 10-20 channels (matches A dimensions)
+        montage = mne.channels.make_standard_montage('standard_1020')
+        pos_dict = montage.get_positions()['ch_pos']
+        valid_mask = [i for i, ch in enumerate(ch_names) if ch in pos_dict]
+        gnn_valid = gnn_feat[valid_mask]
+
+        x_tensor = torch.tensor(gnn_valid, dtype=torch.float)
+        edge_index = torch.tensor(np.array(np.nonzero(A)), dtype=torch.long)
         batch = torch.zeros(x_tensor.shape[0], dtype=torch.long)
         with torch.no_grad():
             emb = gcn.embed(x_tensor, edge_index, batch).numpy().flatten()
-        ccv = np.concatenate([hc, emb])
+
+        ccv = np.concatenate([hc, extra, emb])  # 30 + 42 + 64 = 136
         ccv_list.append(ccv)
 
     return np.array(ccv_list, dtype=np.float32)
@@ -243,8 +306,8 @@ def get_mlp_layer_activations(model, x_sample):
 def create_mlp_animation(model, samples, scaler=None, output_path="plots/mlp_inference.gif"):
     """Create animated GIF of MLP inference showing activations flowing through network."""
     # Layer sizes for the diagram
-    layer_sizes = [62, 128, 64, 32, 2]
-    layer_labels = ["Input\n(CCV 62d)", "Hidden 1\n(128, BN+GELU)", "Hidden 2\n(64, BN+GELU)",
+    layer_sizes = [136, 128, 64, 32, 2]
+    layer_labels = ["Input\n(CCV 136d)", "Hidden 1\n(128, BN+GELU)", "Hidden 2\n(64, BN+GELU)",
                     "Hidden 3\n(32, GELU)", "Output\n(2 classes)"]
     # Max nodes to draw per layer (subsample large layers)
     max_display = [20, 20, 16, 16, 2]
@@ -538,11 +601,11 @@ def create_qsup_animation(model, samples, scaler=None, output_path="plots/qsup_i
 
 if __name__ == "__main__":
     print("Loading models...")
-    mlp = TorchMLP(input_dim=62, num_classes=2)
+    mlp = TorchMLP(input_dim=136, num_classes=2)
     mlp.load_state_dict(torch.load(os.path.join(MODELS_DIR, "mlp_model.pth"), map_location="cpu"))
     mlp.eval()
 
-    qsup = ExtendedQSUP(input_dim=62, hidden_dim=48, num_classes=2,
+    qsup = ExtendedQSUP(input_dim=136, hidden_dim=48, num_classes=2,
                          num_wavefunctions=8, partial_norm=1.5,
                          phase_per_dim=True, self_modulation_steps=3, topk=12)
     qsup.load_state_dict(torch.load(os.path.join(MODELS_DIR, "qsup_model.pth"),
