@@ -125,6 +125,57 @@ participant_labels = load_participant_labels(
 )
 
 #############################################
+# 1b) DOMAIN / SOURCE MAPPING
+#############################################
+# Source IDs:  0=ds004504  1=ds003800  2=ds006036  3=zenodo/other
+SOURCE_NAMES = ['ds004504', 'ds003800', 'ds006036', 'zenodo']
+N_SOURCES = len(SOURCE_NAMES)
+
+def get_source_id(subj_id: str) -> int:
+    if subj_id.startswith('bsub'):
+        return 1
+    if subj_id.startswith('zsub'):
+        return 2
+    if subj_id.startswith('sub'):
+        return 0
+    return 3   # zenodo / other uppercase IDs
+
+
+class SourceAwareScaler:
+    """
+    Agentic Context Scaler — fits one StandardScaler per source domain
+    on the training fold, then applies the domain-matched scaler at
+    inference.  Falls back to a global scaler for unseen source IDs.
+
+    This corrects for systematic EEG amplitude / power offsets that
+    arise from different recording hardware and paradigms across datasets,
+    without ever leaking test-set statistics.
+    """
+    def __init__(self):
+        self.scalers: dict = {}
+        self.global_scaler = StandardScaler()
+
+    def fit(self, X: np.ndarray, source_ids: np.ndarray) -> 'SourceAwareScaler':
+        self.global_scaler.fit(X)
+        for sid in np.unique(source_ids):
+            mask = source_ids == sid
+            if mask.sum() >= 2:
+                self.scalers[int(sid)] = StandardScaler().fit(X[mask])
+        return self
+
+    def transform(self, X: np.ndarray, source_ids: np.ndarray) -> np.ndarray:
+        out = np.empty_like(X, dtype=np.float32)
+        for sid in np.unique(source_ids):
+            mask = source_ids == sid
+            scaler = self.scalers.get(int(sid), self.global_scaler)
+            out[mask] = scaler.transform(X[mask]).astype(np.float32)
+        return out
+
+    def fit_transform(self, X: np.ndarray, source_ids: np.ndarray) -> np.ndarray:
+        return self.fit(X, source_ids).transform(X, source_ids)
+
+
+#############################################
 # 2) LOAD SAVED FEATURE FILES
 #############################################
 def load_saved_features():
@@ -161,7 +212,8 @@ def load_saved_features():
 
     X_handcrafted = np.stack(X_handcrafted, axis=0).astype(np.float32)
     labels = np.array(labels, dtype=np.int32)
-    return X_handcrafted, X_gnn, labels, ch_names_list, subj_ids
+    source_ids = np.array([get_source_id(s) for s in subj_ids], dtype=np.int32)
+    return X_handcrafted, X_gnn, labels, ch_names_list, subj_ids, source_ids
 
 #############################################
 # 2b) EXTRA FEATURES FROM GNN BAND-POWER MATRIX
@@ -281,8 +333,74 @@ def compute_class_weights(y, device):
     weights = weights / weights.sum() * len(classes)  # normalize so mean weight = 1
     return torch.tensor(weights, dtype=torch.float, device=device)
 
+# Per-source training loss weights — higher = more trusted signal
+# ds004504 (resting EEG, validated AD cohort) is the gold standard
+SOURCE_LOSS_WEIGHTS = {
+    0: 1.5,   # ds004504  — resting EEG, gold standard
+    1: 1.0,   # ds003800  — resting EEG, same paradigm
+    2: 0.6,   # ds006036  — photostimulation EEG, different paradigm
+    3: 0.4,   # zenodo    — HD-EEG, different hardware+paradigm
+}
+
+def get_sample_weights(source_ids: np.ndarray) -> np.ndarray:
+    """Return per-sample training loss weights based on source domain."""
+    w = np.array([SOURCE_LOSS_WEIGHTS[int(s)] for s in source_ids], dtype=np.float32)
+    return w / w.mean()   # normalise so mean weight = 1 (keeps learning-rate scale stable)
+
 #############################################
 # MIXUP AUGMENTATION
+#############################################
+# DOMAIN-STRATIFIED SMOTE
+#############################################
+def domain_stratified_smote(X: np.ndarray, y: np.ndarray,
+                             src: np.ndarray, random_state: int = 5):
+    """
+    Apply SMOTE within each source domain separately, then concatenate.
+    Avoids creating synthetic samples that interpolate across EEG paradigms
+    (e.g. resting-state ↔ photostimulation).
+
+    Domains with < 6 samples of either class fall back to random oversampling
+    (SMOTE needs at least k+1=6 neighbours by default).
+    Returns X_res, y_res, src_res.
+    """
+    from imblearn.over_sampling import RandomOverSampler
+    X_parts, y_parts, src_parts = [], [], []
+    unique_srcs = np.unique(src)
+    max_class_count = 0
+    # First pass: find the max minority count after per-domain resampling
+    for sid in unique_srcs:
+        mask = src == sid
+        counts = np.bincount(y[mask])
+        if len(counts) == 2:
+            max_class_count = max(max_class_count, max(counts))
+
+    for sid in unique_srcs:
+        mask = src == sid
+        Xs, ys = X[mask], y[mask]
+        src_vec = src[mask]
+        counts = np.bincount(ys)
+        if len(counts) < 2 or min(counts) < 2:
+            # Only one class or too few — keep as-is
+            X_parts.append(Xs); y_parts.append(ys); src_parts.append(src_vec)
+            continue
+        min_count = min(counts)
+        if min_count >= 6:
+            resampler = SMOTE(random_state=random_state)
+        else:
+            resampler = RandomOverSampler(random_state=random_state)
+        try:
+            Xr, yr = resampler.fit_resample(Xs, ys)
+            # Assign source ID to new samples (inherited from same domain)
+            src_r = np.full(len(yr), sid, dtype=src.dtype)
+            X_parts.append(Xr); y_parts.append(yr); src_parts.append(src_r)
+        except Exception:
+            X_parts.append(Xs); y_parts.append(ys); src_parts.append(src_vec)
+
+    return (np.vstack(X_parts),
+            np.concatenate(y_parts),
+            np.concatenate(src_parts))
+
+
 #############################################
 def mixup_data(x, y, alpha=0.2):
     """Apply mixup augmentation to a batch."""
@@ -321,8 +439,10 @@ class TorchMLP(nn.Module):
 
 
 def train_mlp_torch(X_train, y_train, X_val, y_val, input_dim, num_classes,
-                    epochs=200, patience=30, log_dir=None, device="cpu"):
-    """Train TorchMLP with AdamW, CosineAnnealingWarmRestarts, label smoothing, mixup."""
+                    epochs=200, patience=30, log_dir=None, device="cpu",
+                    sample_weights=None):
+    """Train TorchMLP with AdamW, CosineAnnealingWarmRestarts, label smoothing, mixup.
+    sample_weights: per-sample float array (same len as X_train) for source-weighted loss."""
     if log_dir is None:
         log_dir = "logs/mlp_fold"
     writer = SummaryWriter(log_dir=log_dir)
@@ -331,11 +451,15 @@ def train_mlp_torch(X_train, y_train, X_val, y_val, input_dim, num_classes,
     y_train_t = torch.tensor(y_train, dtype=torch.long, device=device)
     X_val_t   = torch.tensor(X_val,   dtype=torch.float, device=device)
     y_val_t   = torch.tensor(y_val,   dtype=torch.long, device=device)
+    sw_t = (torch.tensor(sample_weights, dtype=torch.float, device=device)
+            if sample_weights is not None else None)
 
     model = TorchMLP(input_dim, num_classes).to(device)
 
     class_weights = compute_class_weights(y_train, device)
-    loss_fn = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
+    # Use reduction='none' when we have per-sample source weights
+    loss_fn_none = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05, reduction='none')
+    loss_fn      = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
 
     optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-3)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2)
@@ -354,7 +478,13 @@ def train_mlp_torch(X_train, y_train, X_val, y_val, input_dim, num_classes,
         # Mixup augmentation
         mixed_x, y_a, y_b, lam = mixup_data(X_train_t, y_train_t, alpha=0.2)
         logits = model(mixed_x)
-        loss = mixup_criterion(loss_fn, logits, y_a, y_b, lam)
+        if sw_t is not None:
+            # Source-weighted loss: weight per-sample CE before averaging
+            loss_a = loss_fn_none(logits, y_a) * sw_t
+            loss_b = loss_fn_none(logits, y_b) * sw_t
+            loss = (lam * loss_a + (1 - lam) * loss_b).mean()
+        else:
+            loss = mixup_criterion(loss_fn, logits, y_a, y_b, lam)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -654,7 +784,8 @@ def train_extended_qsup_tb(
     input_dim, hidden_dim, num_classes,
     num_wavefunctions=3, partial_norm=1.5,
     phase_per_dim=False, self_modulation_steps=2, topk=8,
-    epochs=150, patience=25, log_dir="logs/qsup_fold", device="cpu"):
+    epochs=150, patience=25, log_dir="logs/qsup_fold", device="cpu",
+    sample_weights=None):
 
     writer = SummaryWriter(log_dir=log_dir)
 
@@ -662,6 +793,8 @@ def train_extended_qsup_tb(
     y_train_t = torch.tensor(y_train, dtype=torch.long, device=device)
     X_val_t   = torch.tensor(X_val,   dtype=torch.float, device=device)
     y_val_t   = torch.tensor(y_val,   dtype=torch.long, device=device)
+    sw_t = (torch.tensor(sample_weights, dtype=torch.float, device=device)
+            if sample_weights is not None else None)
 
     model = ExtendedQSUP(
         input_dim, hidden_dim, num_classes,
@@ -674,7 +807,8 @@ def train_extended_qsup_tb(
 
     # Class-weighted loss with mild label smoothing
     class_weights = compute_class_weights(y_train, device)
-    loss_fn = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.02)
+    loss_fn_none = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.02, reduction='none')
+    loss_fn      = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.02)
 
     optimizer = TorchAdam(model.parameters(), lr=5e-4, weight_decay=5e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
@@ -693,7 +827,12 @@ def train_extended_qsup_tb(
         # Mixup augmentation
         mixed_x, y_a, y_b, lam = mixup_data(X_train_t, y_train_t, alpha=0.2)
         logits = model(mixed_x)
-        loss = mixup_criterion(loss_fn, logits, y_a, y_b, lam)
+        if sw_t is not None:
+            loss_a = loss_fn_none(logits, y_a) * sw_t
+            loss_b = loss_fn_none(logits, y_b) * sw_t
+            loss = (lam * loss_a + (1 - lam) * loss_b).mean()
+        else:
+            loss = mixup_criterion(loss_fn, logits, y_a, y_b, lam)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -759,7 +898,7 @@ def train_extended_qsup_tb(
 #############################################
 # 6) CROSS-VALIDATION FOR MLP (PyTorch)
 #############################################
-def cv_classification_MLP(CCV, y):
+def cv_classification_MLP(CCV, y, source_ids=None):
     N_FOLDS = 5
     skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=5)
     all_y_true = []
@@ -784,10 +923,10 @@ def cv_classification_MLP(CCV, y):
         X_train, X_test = CCV[train_idx], CCV[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
 
-        # Scale BEFORE SMOTE (correct order)
+        # Global scaler — stable with small per-domain sample counts
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
+        X_test_scaled  = scaler.transform(X_test)
 
         smote = SMOTE(random_state=5)
         X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
@@ -896,7 +1035,7 @@ def cv_classification_MLP(CCV, y):
 #############################################
 # 7) CROSS-VALIDATION FOR Extended QSUP
 #############################################
-def cv_classification_ExtendedQSUP(CCV, y):
+def cv_classification_ExtendedQSUP(CCV, y, source_ids=None):
     """
     Trains ExtendedQSUP v2 with 5-fold cross validation (5-model ensemble per fold).
     Saves the best fold's model (highest val AUC) as "qsup_model.pth".
@@ -931,10 +1070,10 @@ def cv_classification_ExtendedQSUP(CCV, y):
         X_train, X_test = CCV[train_idx], CCV[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
 
-        # Scale BEFORE SMOTE (correct order)
+        # Global scaler — stable with small per-domain sample counts
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
+        X_test_scaled  = scaler.transform(X_test)
 
         smote = SMOTE(random_state=5)
         X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
@@ -1061,7 +1200,7 @@ def cv_classification_ExtendedQSUP(CCV, y):
 #    updating both sets of weights jointly.
 #############################################
 def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
-               input_dim, device, epochs=100, patience=20):
+               input_dim, device, epochs=100, patience=20, source_ids=None):
     """
     Joint GCN + MLP training: MLP loss gradients flow all the way back through the GCN.
     No SMOTE (synthetic samples lack graph structure).
@@ -1069,7 +1208,7 @@ def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
 
     Algorithm per fold:
       1. Clone pre-trained GCN as starting point.
-      2. Fit a StandardScaler on the full CCV (HC + extra + frozen GCN embs).
+      2. Fit a SourceAwareScaler on the full CCV (HC + extra + frozen GCN embs).
       3. Each epoch: forward GCN differentiably → scale embs → concat with
          pre-scaled HC+extra → MLP → loss → backward → both GCN and MLP update.
       4. Save best MLP + GCN by val loss; evaluate by AUC.
@@ -1106,24 +1245,42 @@ def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
                 all_init_emb = gcn.embed(d.x, d.edge_index, d.batch).cpu().numpy()
 
         init_CCV_tr = np.hstack([HC_tr, ex_tr, all_init_emb[train_idx]])
-        scaler = StandardScaler()
-        scaler.fit(init_CCV_tr)
+        if source_ids is not None:
+            scaler = SourceAwareScaler()
+            scaler.fit(init_CCV_tr, source_ids[train_idx])
+        else:
+            scaler = StandardScaler()
+            scaler.fit(init_CCV_tr)
 
-        # Split scaler params: first 72 dims = HC+extra, last 64 = GCN embs
+        # GCN emb scaler — global (used for differentiable normalisation in the training loop)
         base_dim = HC_tr.shape[1] + ex_tr.shape[1]   # 72
-        base_mean  = scaler.mean_[:base_dim]
-        base_scale = scaler.scale_[:base_dim]
-        emb_mean_np  = scaler.mean_[base_dim:]
-        emb_scale_np = scaler.scale_[base_dim:]
+        emb_scaler   = StandardScaler().fit(all_init_emb[train_idx])
+        emb_mean_np  = emb_scaler.mean_
+        emb_scale_np = emb_scaler.scale_
 
-        # Pre-scale the static HC+extra tensors
-        HC_ex_tr_s  = ((np.hstack([HC_tr, ex_tr])  - base_mean) / (base_scale + 1e-8)).astype(np.float32)
-        HC_ex_val_s = ((np.hstack([HC_val, ex_val]) - base_mean) / (base_scale + 1e-8)).astype(np.float32)
+        # Pre-scale static HC+extra with global scaler
+        HC_ex_tr_raw  = np.hstack([HC_tr, ex_tr])
+        HC_ex_val_raw = np.hstack([HC_val, ex_val])
+        base_scaler = StandardScaler()
+        HC_ex_tr_s  = base_scaler.fit_transform(HC_ex_tr_raw).astype(np.float32)
+        HC_ex_val_s = base_scaler.transform(HC_ex_val_raw).astype(np.float32)
 
         X_base_t   = torch.tensor(HC_ex_tr_s, dtype=torch.float, device=device)
         y_tr_t     = torch.tensor(y_tr,       dtype=torch.long,  device=device)
         emb_mean_t = torch.tensor(emb_mean_np,  dtype=torch.float, device=device)
         emb_std_t  = torch.tensor(emb_scale_np, dtype=torch.float, device=device)
+
+        # Source one-hot tensors for train and val folds
+        if source_ids is not None:
+            src_tr_oh  = np.zeros((len(train_idx), N_SOURCES), dtype=np.float32)
+            src_tr_oh[np.arange(len(train_idx)), source_ids[train_idx]] = 1.0
+            src_val_oh = np.zeros((len(test_idx),  N_SOURCES), dtype=np.float32)
+            src_val_oh[np.arange(len(test_idx)),  source_ids[test_idx]]  = 1.0
+            src_tr_t  = torch.tensor(src_tr_oh,  dtype=torch.float, device=device)
+            src_val_t = torch.tensor(src_val_oh, dtype=torch.float, device=device)
+        else:
+            src_tr_t  = None
+            src_val_t = None
 
         # --- Build fresh MLP and joint optimizer ---
         mlp = TorchMLP(input_dim, num_classes).to(device)
@@ -1151,7 +1308,10 @@ def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
 
             # Differentiable normalisation of GCN embs (gradients flow through here)
             emb_scaled = (emb - emb_mean_t) / (emb_std_t + 1e-8)
-            X_full = torch.cat([X_base_t, emb_scaled], dim=1)  # (N_train, input_dim)
+            parts = [X_base_t, emb_scaled]
+            if src_tr_t is not None:
+                parts.append(src_tr_t)
+            X_full = torch.cat(parts, dim=1)  # (N_train, input_dim)
 
             mixed_x, y_a, y_b, lam = mixup_data(X_full, y_tr_t, alpha=0.2)
             logits = mlp(mixed_x)
@@ -1172,7 +1332,10 @@ def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
                     val_emb = gcn.embed(vd.x, vd.edge_index, vd.batch)
                 val_emb_s  = (val_emb - emb_mean_t) / (emb_std_t + 1e-8)
                 X_val_base = torch.tensor(HC_ex_val_s, dtype=torch.float, device=device)
-                X_val_full = torch.cat([X_val_base, val_emb_s], dim=1)
+                val_parts = [X_val_base, val_emb_s]
+                if src_val_t is not None:
+                    val_parts.append(src_val_t)
+                X_val_full = torch.cat(val_parts, dim=1)
                 val_logits = mlp(X_val_full)
                 val_proba  = F.softmax(val_logits, dim=1).cpu().numpy()
                 val_loss   = log_loss(y_val, val_proba)
@@ -1199,7 +1362,10 @@ def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
                 val_emb = gcn.embed(vd.x, vd.edge_index, vd.batch)
             val_emb_s  = (val_emb - emb_mean_t) / (emb_std_t + 1e-8)
             X_val_base = torch.tensor(HC_ex_val_s, dtype=torch.float, device=device)
-            X_val_full = torch.cat([X_val_base, val_emb_s], dim=1)
+            final_val_parts = [X_val_base, val_emb_s]
+            if src_val_t is not None:
+                final_val_parts.append(src_val_t)
+            X_val_full = torch.cat(final_val_parts, dim=1)
             val_logits = mlp(X_val_full)
             val_proba  = F.softmax(val_logits, dim=1).cpu().numpy()
         val_preds = val_proba.argmax(axis=1)
@@ -1461,9 +1627,11 @@ def plot_roc_comparison(all_y_true, all_y_proba_mlp, all_y_proba_qsup):
 def main():
     start_time = time.time()
     # 1) Load features
-    X_handcrafted, X_gnn, y, ch_names_list, subj_ids = load_saved_features()
+    X_handcrafted, X_gnn, y, ch_names_list, subj_ids, source_ids = load_saved_features()
     print(f"[INFO] Handcrafted shape: {X_handcrafted.shape}")
     print(f"[INFO] {len(X_gnn)} GNN feature matrices loaded.")
+    for sid, name in enumerate(SOURCE_NAMES):
+        print(f"[INFO]   Source {sid} ({name}): {(source_ids == sid).sum()} subjects")
 
     # 1b) Extract engineered features from GNN band-power matrices (42 dims each)
     X_extra = np.stack([extract_extra_features_from_gnn(g) for g in X_gnn], axis=0)
@@ -1478,6 +1646,7 @@ def main():
     X_handcrafted = X_handcrafted[valid_idx]
     X_extra       = X_extra[valid_idx]
     y             = y[valid_idx]
+    source_ids    = source_ids[valid_idx]
     print(f"[INFO] Valid subjects after adjacency filter: {len(valid_idx)}/{len(X_gnn)}")
     indices = np.arange(len(pyg_dataset))
     train_idx, val_idx = train_test_split(
@@ -1569,11 +1738,13 @@ def main():
     embeddings = np.vstack(embeddings)
     print(f"[INFO] GCN embeddings shape: {embeddings.shape}")
 
-    # Combine => CCV (30 handcrafted + 42 extra GNN + 64 GCN embeddings = 136 dims)
+    # Combine => CCV (30 handcrafted + 42 extra GNN + 64 GCN embeddings + 4 source = 140 dims)
     if X_handcrafted.shape[0] != embeddings.shape[0]:
         raise ValueError("Mismatch between handcrafted features and GCN embeddings!")
-    CCV = np.hstack((X_handcrafted, X_extra, embeddings))
-    print(f"[INFO] Final CCV shape: {CCV.shape}")   # (N, 136)
+    source_onehot = np.zeros((len(source_ids), N_SOURCES), dtype=np.float32)
+    source_onehot[np.arange(len(source_ids)), source_ids] = 1.0
+    CCV = np.hstack((X_handcrafted, X_extra, embeddings, source_onehot))
+    print(f"[INFO] Final CCV shape: {CCV.shape}")   # (N, 140)
 
     # Build feature names for visualization
     handcrafted_names = [f"HC_{i}" for i in range(X_handcrafted.shape[1])]
@@ -1590,13 +1761,13 @@ def main():
     # 5-fold classification with MLP
     print("\n=== 5-Fold Classification with MLP (PyTorch) ===")
     (mlp_y_true, mlp_y_pred, mlp_y_proba,
-     mlp_histories, mlp_fold_accs, mlp_fold_aucs) = cv_classification_MLP(CCV, y)
+     mlp_histories, mlp_fold_accs, mlp_fold_aucs) = cv_classification_MLP(CCV, y, source_ids)
 
     # 5-fold classification with Extended QSUP
     print("\n=== 5-Fold Classification with Extended QSUP v2 ===")
     (qsup_y_true, qsup_y_pred, qsup_y_proba,
      qsup_histories, qsup_fold_accs, qsup_fold_aucs,
-     best_qsup_model, best_qsup_scaler) = cv_classification_ExtendedQSUP(CCV, y)
+     best_qsup_model, best_qsup_scaler) = cv_classification_ExtendedQSUP(CCV, y, source_ids)
 
     # ===== E2E JOINT GCN+MLP TRAINING =====
     print("\n=== End-to-End Joint GCN+MLP Training (backprop through GCN) ===")
@@ -1604,7 +1775,7 @@ def main():
      e2e_fold_accs, e2e_fold_aucs) = cv_mlp_e2e(
         X_handcrafted, X_extra, pyg_dataset, y,
         gcn_init=gcn_model, input_dim=CCV.shape[1], device=device,
-        epochs=100, patience=20
+        epochs=100, patience=20, source_ids=source_ids
     )
 
     # ===== VISUALIZATIONS =====

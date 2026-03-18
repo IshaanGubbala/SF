@@ -280,7 +280,18 @@ def load_sample_data(n=20):
         with torch.no_grad():
             emb = gcn.embed(x_tensor, edge_index, batch).numpy().flatten()
 
-        ccv = np.concatenate([hc, extra, emb])  # 30 + 42 + 64 = 136
+        # Source one-hot (4-dim): ds004504=0, ds003800=1, ds006036=2, zenodo=3
+        if subj_id.startswith('bsub'):
+            src = 1
+        elif subj_id.startswith('zsub'):
+            src = 2
+        elif subj_id.startswith('sub'):
+            src = 0
+        else:
+            src = 3
+        src_onehot = np.zeros(4, dtype=np.float32)
+        src_onehot[src] = 1.0
+        ccv = np.concatenate([hc, extra, emb, src_onehot])  # 30+42+64+4 = 140
         ccv_list.append(ccv)
 
     return np.array(ccv_list, dtype=np.float32)
@@ -306,8 +317,8 @@ def get_mlp_layer_activations(model, x_sample):
 def create_mlp_animation(model, samples, scaler=None, output_path="plots/mlp_inference.gif"):
     """Create animated GIF of MLP inference showing activations flowing through network."""
     # Layer sizes for the diagram
-    layer_sizes = [136, 128, 64, 32, 2]
-    layer_labels = ["Input\n(CCV 136d)", "Hidden 1\n(128, BN+GELU)", "Hidden 2\n(64, BN+GELU)",
+    layer_sizes = [140, 128, 64, 32, 2]
+    layer_labels = ["Input\n(CCV 140d)", "Hidden 1\n(128, BN+GELU)", "Hidden 2\n(64, BN+GELU)",
                     "Hidden 3\n(32, GELU)", "Output\n(2 classes)"]
     # Max nodes to draw per layer (subsample large layers)
     max_display = [20, 20, 16, 16, 2]
@@ -601,11 +612,11 @@ def create_qsup_animation(model, samples, scaler=None, output_path="plots/qsup_i
 
 if __name__ == "__main__":
     print("Loading models...")
-    mlp = TorchMLP(input_dim=136, num_classes=2)
+    mlp = TorchMLP(input_dim=140, num_classes=2)
     mlp.load_state_dict(torch.load(os.path.join(MODELS_DIR, "mlp_model.pth"), map_location="cpu"))
     mlp.eval()
 
-    qsup = ExtendedQSUP(input_dim=136, hidden_dim=48, num_classes=2,
+    qsup = ExtendedQSUP(input_dim=140, hidden_dim=48, num_classes=2,
                          num_wavefunctions=8, partial_norm=1.5,
                          phase_per_dim=True, self_modulation_steps=3, topk=12)
     qsup.load_state_dict(torch.load(os.path.join(MODELS_DIR, "qsup_model.pth"),
