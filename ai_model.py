@@ -74,6 +74,7 @@ for d in [PLOTS_DIR, LOG_DIR, MODELS_DIR]:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PARTICIPANTS_FILE_DS004504 = os.path.join(BASE_DIR, "ds004504", "participants.tsv")
 PARTICIPANTS_FILE_DS003800 = os.path.join(BASE_DIR, "ds003800", "participants.tsv")
+PARTICIPANTS_FILE_DS006036 = os.path.join(BASE_DIR, "ds006036", "participants.tsv")
 
 #############################################
 # 1) LOAD PARTICIPANT LABELS
@@ -82,20 +83,40 @@ def load_participant_labels(ds004504_file, ds003800_file):
     """
     Binary labelling (FTD counted as Alzheimer):
       0 = Healthy Control (C)
-      1 = Alzheimer's Disease or FTD (A / F / ds003800)
-    88 subjects total: 29 Control + 59 AD+FTD
+      1 = Alzheimer's Disease or FTD (A / F / all ds003800)
+    Datasets:
+      ds004504:  88 subjects (sub-001..sub-088) — A/F/C groups
+      ds003800:  13 subjects (sub-01..sub-13)   — all AD
+      ds006036:  88 subjects (zsub001..zsub088) — same cohort as ds004504, photic EEG
+      Zenodo:     2 samples  (S055=HC, i108=AD)
     """
     label_dict = {}
-    group_map_ds004504 = {"A": 1, "C": 0, "F": 1}   # FTD counted as AD
-    df_ds004504 = pd.read_csv(ds004504_file, sep="\t")
-    df_ds004504 = df_ds004504[df_ds004504['Group'].isin(group_map_ds004504.keys())]
-    labels_ds004504 = df_ds004504.set_index("participant_id")["Group"].map(group_map_ds004504).to_dict()
-    label_dict.update(labels_ds004504)
+    group_map = {"A": 1, "C": 0, "F": 1}   # FTD counted as AD
 
-    df_ds003800 = pd.read_csv(ds003800_file, sep="\t")
-    # All ds003800 subjects are AD → class 1
-    labels_ds003800 = df_ds003800.set_index("participant_id")["Group"].apply(lambda x: 1).to_dict()
-    label_dict.update(labels_ds003800)
+    # ds004504
+    df = pd.read_csv(ds004504_file, sep="\t")
+    df = df[df['Group'].isin(group_map.keys())]
+    label_dict.update(df.set_index("participant_id")["Group"].map(group_map).to_dict())
+
+    # ds003800 — all AD, processed with "bsub" prefix (bsub001..bsub013)
+    df = pd.read_csv(ds003800_file, sep="\t")
+    for pid in df["participant_id"]:
+        num = int(pid.split('-')[1])
+        label_dict[f"bsub{num:03d}"] = 1
+
+    # ds006036 — same cohort, photic EEG; subject IDs prefixed with "z" (zsub001 etc.)
+    if os.path.exists(PARTICIPANTS_FILE_DS006036):
+        df = pd.read_csv(PARTICIPANTS_FILE_DS006036, sep="\t")
+        df = df[df['Group'].isin(group_map.keys())]
+        for pid, grp in zip(df["participant_id"], df["Group"]):
+            # sub-001 → zsub001
+            zsub_id = "z" + pid.replace("-", "")
+            label_dict[zsub_id] = group_map[grp]
+
+    # Zenodo samples (HC=0, AD=1)
+    label_dict["S055"] = 0   # HC
+    label_dict["i108"] = 1   # AD
+
     return label_dict
 
 participant_labels = load_participant_labels(
@@ -230,7 +251,9 @@ def compute_adjacency_matrix(ch_names):
     return A
 
 def create_pyg_dataset(gnn_list, y, ch_names_list):
+    """Returns (pyg_data_list, valid_indices) — valid_indices are the original positions kept."""
     pyg_data_list = []
+    valid_indices = []
     for i in range(len(gnn_list)):
         A = compute_adjacency_matrix(ch_names_list[i])
         if A is None:
@@ -245,7 +268,8 @@ def create_pyg_dataset(gnn_list, y, ch_names_list):
         y_val = torch.tensor([y[i]], dtype=torch.long)
         data_obj = Data(x=x, edge_index=edge_index, y=y_val)
         pyg_data_list.append(data_obj)
-    return pyg_data_list
+        valid_indices.append(i)
+    return pyg_data_list, valid_indices
 
 #############################################
 # HELPER: Compute class weights for CE loss
@@ -1446,9 +1470,15 @@ def main():
     print(f"[INFO] Extra GNN features shape: {X_extra.shape}")   # (N, 42)
 
     # 2) Build PyG dataset for GCN
-    pyg_dataset = create_pyg_dataset(X_gnn, y, ch_names_list)
+    pyg_dataset, valid_idx = create_pyg_dataset(X_gnn, y, ch_names_list)
     if len(pyg_dataset) == 0:
         raise ValueError("No valid PyG dataset could be constructed!")
+    # Filter handcrafted/extra/y to only valid subjects (those with adjacency matrices)
+    valid_idx = np.array(valid_idx)
+    X_handcrafted = X_handcrafted[valid_idx]
+    X_extra       = X_extra[valid_idx]
+    y             = y[valid_idx]
+    print(f"[INFO] Valid subjects after adjacency filter: {len(valid_idx)}/{len(X_gnn)}")
     indices = np.arange(len(pyg_dataset))
     train_idx, val_idx = train_test_split(
         indices, test_size=0.15, random_state=5,

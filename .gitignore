@@ -26,3 +26,7 @@ logs/
 # Temporary files
 *.tmp
 *.bak
+
+# Raw EEG dataset files (large binary, regenerate with process_*.py)
+zenodo_sample/
+ds006036/
