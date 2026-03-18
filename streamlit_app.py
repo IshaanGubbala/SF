@@ -111,10 +111,22 @@ if TORCH_AVAILABLE:
             self.self_modulation_steps = self_modulation_steps
             self.topk = topk
 
+            # Auto-determined input projection (same formula as ai_model.py)
+            proj_dim = ((max(hidden_dim, input_dim // 2) + 7) // 8) * 8
+            self.use_proj = proj_dim < input_dim
+            if self.use_proj:
+                self.input_proj = nn.Sequential(
+                    nn.Linear(input_dim, proj_dim),
+                    nn.LayerNorm(proj_dim),
+                    nn.GELU(),
+                    nn.Dropout(0.1),
+                )
+            wf_input_dim = proj_dim if self.use_proj else input_dim
+
             # Wavefunction nets with spectral norm
             self.wavefunction_nets = nn.ModuleList()
             for _ in range(num_wavefunctions):
-                layer = nn.Linear(input_dim, 2 * hidden_dim)
+                layer = nn.Linear(wf_input_dim, 2 * hidden_dim)
                 layer = parametrizations.spectral_norm(layer)
                 self.wavefunction_nets.append(layer)
 
@@ -145,13 +157,14 @@ if TORCH_AVAILABLE:
                 nn.Dropout(0.1),
                 nn.Linear(hidden_dim, num_classes),
             )
-            # Initialize final layer bias for AD
             nn.init.constant_(self.classifier[-1].bias, 0.0)
-            self.classifier[-1].bias.data[1] = 0.75
 
         def forward(self, x):
             batch_size = x.size(0)
             eps = 1e-8
+
+            if self.use_proj:
+                x = self.input_proj(x)
 
             wave_r_list = []
             wave_i_list = []

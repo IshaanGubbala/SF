@@ -129,8 +129,19 @@ class ExtendedQSUP(nn.Module):
         self.self_modulation_steps = self_modulation_steps
         self.topk = topk
 
+        proj_dim = ((max(hidden_dim, input_dim // 2) + 7) // 8) * 8
+        self.use_proj = proj_dim < input_dim
+        if self.use_proj:
+            self.input_proj = nn.Sequential(
+                nn.Linear(input_dim, proj_dim),
+                nn.LayerNorm(proj_dim),
+                nn.GELU(),
+                nn.Dropout(0.1),
+            )
+        wf_input_dim = proj_dim if self.use_proj else input_dim
+
         self.wavefunction_nets = nn.ModuleList([
-            parametrizations.spectral_norm(nn.Linear(input_dim, 2 * hidden_dim)) for _ in range(num_wavefunctions)
+            parametrizations.spectral_norm(nn.Linear(wf_input_dim, 2 * hidden_dim)) for _ in range(num_wavefunctions)
         ])
         self.layer_norms = nn.ModuleList([nn.LayerNorm(2 * hidden_dim) for _ in range(num_wavefunctions)])
         self.temperature = nn.Parameter(torch.ones(1))
@@ -152,11 +163,13 @@ class ExtendedQSUP(nn.Module):
             nn.Linear(hidden_dim, num_classes),
         )
         nn.init.constant_(self.classifier[-1].bias, 0.0)
-        self.classifier[-1].bias.data[1] = 0.75  # Slight bias for AD
 
     def forward(self, x):
         batch_size = x.size(0)
         eps = 1e-8
+
+        if self.use_proj:
+            x = self.input_proj(x)
 
         wave_r_list = []
         wave_i_list = []
@@ -459,30 +472,32 @@ class ConnectionManager:
                     emb = gcn_model.embed(data_obj.x, data_obj.edge_index, data_obj.batch)
                     gcn_emb = emb.cpu().numpy().reshape(1, -1)
             full_vec = np.hstack([gf_30, extra_42, gcn_emb])  # (1, 136)
-            mlp_pred, mlp_conf = 0, 0.0
+            # Classes: 0=Control, 1=FTD, 2=Alzheimer
+            CLASS_LABELS = ["Control", "Alzheimer"]
+            mlp_pred, mlp_conf, mlp_label = 0, 0.0, "Control"
             if mlp_model:
                 try:
                     if mlp_is_torch:
                         with torch.no_grad():
                             t_in = torch.tensor(full_vec, dtype=torch.float)
-                            logits = mlp_model(t_in)
-                            p_m = torch.softmax(logits, dim=1)
-                            mlp_conf = float(p_m[0, 1])
-                            mlp_pred = int(mlp_conf >= 0.5)
+                            p_m = torch.softmax(mlp_model(t_in), dim=1).cpu().numpy()[0]
+                        mlp_pred = int(np.argmax(p_m))
+                        mlp_conf = float(p_m[mlp_pred])
                     else:
-                        proba = mlp_model.predict_proba(full_vec)[0]
-                        mlp_conf = float(proba[1])
-                        mlp_pred = int(mlp_conf >= 0.5)
+                        p_m = mlp_model.predict_proba(full_vec)[0]
+                        mlp_pred = int(np.argmax(p_m))
+                        mlp_conf = float(p_m[mlp_pred])
+                    mlp_label = CLASS_LABELS[mlp_pred]
                 except Exception:
                     pass
-            qsup_pred, qsup_conf = 0, 0.0
+            qsup_pred, qsup_conf, qsup_label = 0, 0.0, "Control"
             if qsup_model:
                 with torch.no_grad():
                     t_in = torch.tensor(full_vec, dtype=torch.float)
-                    logits = qsup_model(t_in)
-                    p_q = torch.softmax(logits, dim=1)
-                    qsup_conf = float(p_q[0, 1])
-                    qsup_pred = int(qsup_conf >= 0.5)
+                    p_q = torch.softmax(qsup_model(t_in), dim=1).cpu().numpy()[0]
+                qsup_pred = int(np.argmax(p_q))
+                qsup_conf = float(p_q[qsup_pred])
+                qsup_label = CLASS_LABELS[qsup_pred]
             pc1, pc2 = 0.0, 0.0
             if pca_model:
                 try:
@@ -496,8 +511,10 @@ class ConnectionManager:
             response = {
                 "prediction_mlp": mlp_pred,
                 "confidence_mlp": mlp_conf,
+                "label_mlp": mlp_label,
                 "prediction_qsup": qsup_pred,
                 "confidence_qsup": qsup_conf,
+                "label_qsup": qsup_label,
                 "prediction_gcn": 0,
                 "confidence_gcn": 0.0,
                 "features": feats_dict,
@@ -507,7 +524,7 @@ class ConnectionManager:
                 "energy": e_val
             }
             await ws.send_json(response)
-            print(f"[INFO] Predictions: MLP={mlp_pred}({mlp_conf:.2f}), QSUP={qsup_pred}({qsup_conf:.2f})")
+            print(f"[INFO] MLP={mlp_label}({mlp_conf:.2f}), QSUP={qsup_label}({qsup_conf:.2f})")
 
 manager = ConnectionManager()
 

@@ -79,17 +79,21 @@ PARTICIPANTS_FILE_DS003800 = os.path.join(BASE_DIR, "ds003800", "participants.ts
 # 1) LOAD PARTICIPANT LABELS
 #############################################
 def load_participant_labels(ds004504_file, ds003800_file):
+    """
+    Binary labelling (FTD counted as Alzheimer):
+      0 = Healthy Control (C)
+      1 = Alzheimer's Disease or FTD (A / F / ds003800)
+    88 subjects total: 29 Control + 59 AD+FTD
+    """
     label_dict = {}
-    group_map_ds004504 = {"A": 1, "C": 0}
+    group_map_ds004504 = {"A": 1, "C": 0, "F": 1}   # FTD counted as AD
     df_ds004504 = pd.read_csv(ds004504_file, sep="\t")
-    # Exclude FTD
-    df_ds004504 = df_ds004504[df_ds004504['Group'] != 'F']
     df_ds004504 = df_ds004504[df_ds004504['Group'].isin(group_map_ds004504.keys())]
     labels_ds004504 = df_ds004504.set_index("participant_id")["Group"].map(group_map_ds004504).to_dict()
     label_dict.update(labels_ds004504)
 
     df_ds003800 = pd.read_csv(ds003800_file, sep="\t")
-    # Suppose all ds003800 are AD
+    # All ds003800 subjects are AD → class 1
     labels_ds003800 = df_ds003800.set_index("participant_id")["Group"].apply(lambda x: 1).to_dict()
     label_dict.update(labels_ds003800)
     return label_dict
@@ -422,10 +426,25 @@ class ExtendedQSUP(nn.Module):
         self.self_modulation_steps = self_modulation_steps
         self.topk = topk
 
+        # Auto-determined input projection:
+        #   proj_dim = nearest multiple of 8 ≥ max(hidden_dim, input_dim//2)
+        #   This compresses high-dim CCVs to a sensible scale for the wavefunction
+        #   nets without requiring a hard-coded target dimension.
+        proj_dim = ((max(hidden_dim, input_dim // 2) + 7) // 8) * 8
+        self.use_proj = proj_dim < input_dim
+        if self.use_proj:
+            self.input_proj = nn.Sequential(
+                nn.Linear(input_dim, proj_dim),
+                nn.LayerNorm(proj_dim),
+                nn.GELU(),
+                nn.Dropout(0.1),
+            )
+        wf_input_dim = proj_dim if self.use_proj else input_dim
+
         # Wavefunction nets with spectral norm
         self.wavefunction_nets = nn.ModuleList()
         for _ in range(num_wavefunctions):
-            layer = nn.Linear(input_dim, 2 * hidden_dim)
+            layer = nn.Linear(wf_input_dim, 2 * hidden_dim)
             layer = parametrizations.spectral_norm(layer)
             self.wavefunction_nets.append(layer)
 
@@ -463,6 +482,9 @@ class ExtendedQSUP(nn.Module):
     def forward(self, x):
         batch_size = x.size(0)
         eps = 1e-8
+
+        if self.use_proj:
+            x = self.input_proj(x)   # (batch, proj_dim)
 
         wave_r_list = []
         wave_i_list = []
@@ -529,6 +551,9 @@ class ExtendedQSUP(nn.Module):
         """Forward pass that also returns internal states for visualization."""
         batch_size = x.size(0)
         eps = 1e-8
+
+        if self.use_proj:
+            x = self.input_proj(x)   # (batch, proj_dim)
 
         wave_r_list = []
         wave_i_list = []
@@ -764,10 +789,14 @@ def cv_classification_MLP(CCV, y):
 
         all_y_true.extend(y_test)
         all_y_pred.extend(test_preds)
-        all_y_proba.extend(test_proba[:, 1])
+        all_y_proba.extend(test_proba.tolist())   # store full (n, num_classes) rows
 
         fold_acc = accuracy_score(y_test, test_preds)
-        fold_auc = roc_auc_score(y_test, test_proba[:, 1])
+        n_cls = len(np.unique(y_test))
+        if n_cls > 1:
+            fold_auc = roc_auc_score(y_test, test_proba[:, 1])
+        else:
+            fold_auc = 0.5
         fold_accuracies.append(fold_acc)
         fold_aucs.append(fold_auc)
 
@@ -784,14 +813,18 @@ def cv_classification_MLP(CCV, y):
                 epochs=200, patience=30
             )
 
-        fpr, tpr, _ = roc_curve(y_test, test_proba[:, 1])
-        plt.figure()
-        plt.plot(fpr, tpr, marker='o', label="MLP")
-        plt.plot([0, 1], [0, 1], 'k--')
-        plt.title(f"MLP ROC Fold {fold_idx} (AUC={fold_auc:.3f})")
-        plt.xlabel("FPR")
-        plt.ylabel("TPR")
-        plt.legend()
+        # ROC plot: one curve per class vs rest
+        fig, ax = plt.subplots()
+        for cls_i in range(test_proba.shape[1]):
+            y_bin = (y_test == cls_i).astype(int)
+            if y_bin.sum() > 0 and y_bin.sum() < len(y_bin):
+                fpr_i, tpr_i, _ = roc_curve(y_bin, test_proba[:, cls_i])
+                auc_i = roc_auc_score(y_bin, test_proba[:, cls_i])
+                lbl = ['Control', 'Alzheimer'][cls_i]
+                ax.plot(fpr_i, tpr_i, label=f"{lbl} (AUC={auc_i:.2f})")
+        ax.plot([0, 1], [0, 1], 'k--')
+        ax.set_title(f"MLP ROC Fold {fold_idx} (macro AUC={fold_auc:.3f})")
+        ax.set_xlabel("FPR"); ax.set_ylabel("TPR"); ax.legend(fontsize=8)
         plt.tight_layout()
         plt.savefig(os.path.join(PLOTS_DIR, f"mlp_roc_fold_{fold_idx}.png"))
         plt.close()
@@ -930,10 +963,14 @@ def cv_classification_ExtendedQSUP(CCV, y):
 
         all_y_true.extend(y_test)
         all_y_pred.extend(test_preds)
-        all_y_proba.extend(test_proba[:, 1])
+        all_y_proba.extend(test_proba.tolist())   # full (n, num_classes) rows
 
         fold_acc = accuracy_score(y_test, test_preds)
-        fold_auc = roc_auc_score(y_test, test_proba[:, 1])
+        n_cls = len(np.unique(y_test))
+        if n_cls > 1:
+            fold_auc = roc_auc_score(y_test, test_proba[:, 1])
+        else:
+            fold_auc = 0.5
         fold_accuracies.append(fold_acc)
         fold_aucs.append(fold_auc)
 
@@ -944,15 +981,18 @@ def cv_classification_ExtendedQSUP(CCV, y):
             best_qsup_scaler = scaler
             best_qsup_model = qsup_model
 
-        # ROC curve for QSUP
-        fpr, tpr, _ = roc_curve(y_test, test_proba[:, 1])
-        plt.figure()
-        plt.plot(fpr, tpr, marker='o', label="QSUP")
-        plt.plot([0, 1], [0, 1], 'k--')
-        plt.title(f"QSUP ROC Fold {fold_idx} (AUC={fold_auc:.3f})")
-        plt.xlabel("FPR")
-        plt.ylabel("TPR")
-        plt.legend()
+        # ROC plot: one curve per class vs rest
+        fig, ax = plt.subplots()
+        for cls_i in range(test_proba.shape[1]):
+            y_bin = (y_test == cls_i).astype(int)
+            if y_bin.sum() > 0 and y_bin.sum() < len(y_bin):
+                fpr_i, tpr_i, _ = roc_curve(y_bin, test_proba[:, cls_i])
+                auc_i = roc_auc_score(y_bin, test_proba[:, cls_i])
+                lbl = ['Control', 'Alzheimer'][cls_i]
+                ax.plot(fpr_i, tpr_i, label=f"{lbl} (AUC={auc_i:.2f})")
+        ax.plot([0, 1], [0, 1], 'k--')
+        ax.set_title(f"QSUP ROC Fold {fold_idx} (macro AUC={fold_auc:.3f})")
+        ax.set_xlabel("FPR"); ax.set_ylabel("TPR"); ax.legend(fontsize=8)
         plt.tight_layout()
         plt.savefig(os.path.join(PLOTS_DIR, f"qsup_roc_fold_{fold_idx}.png"))
         plt.close()
@@ -1141,12 +1181,14 @@ def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
         val_preds = val_proba.argmax(axis=1)
 
         fold_acc = accuracy_score(y_val, val_preds)
-        fold_auc = roc_auc_score(y_val, val_proba[:, 1])
+        n_cls_e2e = len(np.unique(y_val))
+        fold_auc = (roc_auc_score(y_val, val_proba[:, 1])
+                    if n_cls_e2e > 1 else 0.5)
         fold_accuracies.append(fold_acc)
         fold_aucs.append(fold_auc)
         all_y_true.extend(y_val.tolist())
         all_y_pred.extend(val_preds.tolist())
-        all_y_proba.extend(val_proba[:, 1].tolist())
+        all_y_proba.extend(val_proba.tolist())    # full (n, num_classes) rows
         print(f"  [E2E Fold {fold_idx}] Acc={fold_acc:.4f}  AUC={fold_auc:.4f}")
 
         if fold_auc > best_val_auc:
@@ -1157,7 +1199,7 @@ def cv_mlp_e2e(X_handcrafted, X_extra, pyg_dataset, y, gcn_init,
         fold_idx += 1
 
     overall_acc = accuracy_score(all_y_true, all_y_pred)
-    overall_auc = roc_auc_score(all_y_true, all_y_proba)
+    overall_auc = roc_auc_score(all_y_true, np.array(all_y_proba)[:, 1])
     print(f"\n--- E2E MLP+GCN: Accuracy={overall_acc:.4f}  AUC={overall_auc:.4f} ---")
 
     if best_mlp_state:
@@ -1350,24 +1392,39 @@ def plot_embedding_tsne(CCV, y, title="CCV t-SNE"):
 
 
 def plot_roc_comparison(all_y_true, all_y_proba_mlp, all_y_proba_qsup):
-    """Overlay MLP and QSUP ROC curves on a single plot."""
-    fig, ax = plt.subplots(figsize=(8, 6))
+    """
+    Multi-class ROC comparison (one-vs-rest per class) for MLP and QSUP.
+    all_y_proba_* are (N, num_classes) arrays.
+    """
+    y_true = np.array(all_y_true)
+    mlp_p  = np.array(all_y_proba_mlp)
+    qsup_p = np.array(all_y_proba_qsup)
+    num_classes = mlp_p.shape[1]
+    class_names = ['Control', 'FTD', 'Alzheimer'][:num_classes]
+    colors_mlp  = ['tab:blue',   'tab:cyan',   'steelblue']
+    colors_qsup = ['tab:orange', 'tab:red',    'saddlebrown']
 
-    fpr_mlp, tpr_mlp, _ = roc_curve(all_y_true, all_y_proba_mlp)
-    auc_mlp = roc_auc_score(all_y_true, all_y_proba_mlp)
-    ax.plot(fpr_mlp, tpr_mlp, color='tab:blue', linewidth=2,
-            label=f'MLP (AUC = {auc_mlp:.3f})')
+    fig, ax = plt.subplots(figsize=(9, 6))
+    for cls_i in range(num_classes):
+        y_bin = (y_true == cls_i).astype(int)
+        if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
+            continue
+        fpr_m, tpr_m, _ = roc_curve(y_bin, mlp_p[:, cls_i])
+        auc_m = roc_auc_score(y_bin, mlp_p[:, cls_i])
+        ax.plot(fpr_m, tpr_m, color=colors_mlp[cls_i], linewidth=2,
+                label=f'MLP {class_names[cls_i]} (AUC={auc_m:.2f})')
+        fpr_q, tpr_q, _ = roc_curve(y_bin, qsup_p[:, cls_i])
+        auc_q = roc_auc_score(y_bin, qsup_p[:, cls_i])
+        ax.plot(fpr_q, tpr_q, color=colors_qsup[cls_i], linewidth=2, linestyle='--',
+                label=f'QSUP {class_names[cls_i]} (AUC={auc_q:.2f})')
 
-    fpr_qsup, tpr_qsup, _ = roc_curve(all_y_true, all_y_proba_qsup)
-    auc_qsup = roc_auc_score(all_y_true, all_y_proba_qsup)
-    ax.plot(fpr_qsup, tpr_qsup, color='tab:orange', linewidth=2,
-            label=f'QSUP (AUC = {auc_qsup:.3f})')
-
+    macro_mlp  = roc_auc_score(y_true, mlp_p[:, 1])
+    macro_qsup = roc_auc_score(y_true, qsup_p[:, 1])
     ax.plot([0, 1], [0, 1], 'k--', alpha=0.5)
-    ax.set_title('ROC Comparison: MLP vs QSUP')
+    ax.set_title(f'ROC: MLP macro={macro_mlp:.3f} vs QSUP macro={macro_qsup:.3f}')
     ax.set_xlabel('False Positive Rate')
     ax.set_ylabel('True Positive Rate')
-    ax.legend(loc='lower right')
+    ax.legend(loc='lower right', fontsize=7)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(PLOTS_DIR, "roc_comparison.png"), dpi=150)
@@ -1405,7 +1462,7 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     in_channels = X_gnn[0].shape[1]
     hidden_channels = 64          # expanded from 32 for richer embeddings
-    gcn_num_classes = 2
+    gcn_num_classes = len(np.unique(y))   # 2-class: Control / Alzheimer (FTD counted as AD)
     gcn_model = GCNNet(in_channels, hidden_channels, gcn_num_classes).to(device)
 
     # Class-weighted loss for GCN
@@ -1567,18 +1624,23 @@ def main():
 
     # ===== META-ENSEMBLE: MLP + QSUP + E2E =====
     # All three use StratifiedKFold(random_state=5) on same data → y_true arrays align.
+    # all_y_proba arrays are now (N, num_classes) matrices.
+    mlp_proba_arr  = np.array(mlp_y_proba)   # (N, 3)
+    qsup_proba_arr = np.array(qsup_y_proba)  # (N, 3)
+    e2e_proba_arr  = np.array(e2e_y_proba)   # (N, 3)
+
     # 2-model ensemble (MLP + QSUP)
-    meta2_proba = (np.array(mlp_y_proba) + np.array(qsup_y_proba)) / 2.0
-    meta2_preds = (meta2_proba >= 0.5).astype(int)
+    meta2_proba = (mlp_proba_arr + qsup_proba_arr) / 2.0
+    meta2_preds = np.argmax(meta2_proba, axis=1)
     meta2_acc   = accuracy_score(mlp_y_true, meta2_preds)
-    meta2_auc   = roc_auc_score(mlp_y_true, meta2_proba)
+    meta2_auc   = roc_auc_score(mlp_y_true, meta2_proba[:, 1])
     print(f"\n{'META-ENSEMBLE-2 (MLP+QSUP):':42s} Accuracy={meta2_acc:.4f}  AUC={meta2_auc:.4f}")
 
     # 3-model ensemble (MLP + QSUP + E2E)
-    meta3_proba = (np.array(mlp_y_proba) + np.array(qsup_y_proba) + np.array(e2e_y_proba)) / 3.0
-    meta3_preds = (meta3_proba >= 0.5).astype(int)
+    meta3_proba = (mlp_proba_arr + qsup_proba_arr + e2e_proba_arr) / 3.0
+    meta3_preds = np.argmax(meta3_proba, axis=1)
     meta3_acc   = accuracy_score(mlp_y_true, meta3_preds)
-    meta3_auc   = roc_auc_score(mlp_y_true, meta3_proba)
+    meta3_auc   = roc_auc_score(mlp_y_true, meta3_proba[:, 1])
     print(f"{'META-ENSEMBLE-3 (MLP+QSUP+E2E):':42s} Accuracy={meta3_acc:.4f}  AUC={meta3_auc:.4f}")
     print(confusion_matrix(mlp_y_true, meta3_preds))
     print(classification_report(mlp_y_true, meta3_preds, target_names=['Control', 'Alzheimer']))
