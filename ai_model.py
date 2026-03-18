@@ -2,20 +2,25 @@
 """
 Downstream Training Script Using Saved Features (EEG):
 Now includes both:
-  1) MLP (existing partial-fit approach)
-  2) ExtendedQSUP (our quantum-inspired model implemented in torch.nn)
+  1) TorchMLP (PyTorch MLP with modern training)
+  2) ExtendedQSUP v2 (enhanced quantum-inspired model with SWA)
 
-Key Change:
-  • We now save the QSUP model using torch.save(qsup_model.state_dict(), ...)
-    so that you only get raw parameter weights (no pickle of the entire object).
-    This avoids "weights_only=True" issues in PyTorch 2.6.
+Key Changes (v2):
+  - ExtendedQSUP: LayerNorm, learnable temperature, leaky residual gating,
+    2-layer classifier head, spectral norm on wavefunction nets.
+  - TorchMLP: full PyTorch replacement with BatchNorm, GELU, CosineAnnealingWarmRestarts.
+  - Mixup augmentation for both models.
+  - Stochastic Weight Averaging (SWA) for QSUP.
+  - Rich visualization: confusion matrices, training comparison, QSUP internals,
+    gradient feature importance, t-SNE, ROC comparison.
 
 Steps:
   1) Load previously saved EEG features.
   2) Train a GCN to get embeddings.
   3) Combine GCN embeddings + handcrafted features => CCV.
-  4) Cross-validate with both MLP and ExtendedQSUP, logging losses & generating plots.
-  5) Save final MLP as mlp_model.pkl (scikit-learn) and final QSUP as qsup_model.pth (PyTorch state_dict).
+  4) Cross-validate with both TorchMLP and ExtendedQSUP, logging losses & generating plots.
+  5) Save best MLP as mlp_model.pth (PyTorch) + mlp_model.pkl (sklearn fallback),
+     best QSUP as qsup_model.pth (state_dict), GCN as gcn_model.pth, and scalers.
 """
 
 #############################################
@@ -24,26 +29,34 @@ Steps:
 import os
 import glob
 import json
+import copy
 import time
 import numpy as np
 import pandas as pd
 import mne
-import networkx as nx
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
+import joblib
 
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
+from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import (
     accuracy_score, roc_auc_score, roc_curve,
     confusion_matrix, classification_report, log_loss
 )
+from sklearn.manifold import TSNE
 from imblearn.over_sampling import SMOTE
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import Adam as TorchAdam
+import torch.nn.utils.parametrizations as parametrizations
+from torch.optim import Adam as TorchAdam, AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR, CosineAnnealingWarmRestarts
+from torch.optim.swa_utils import AveragedModel, SWALR
 from torch_geometric.data import Data, DataLoader as PyGDataLoader
 from torch_geometric.nn import GCNConv, global_mean_pool
 from torch.utils.tensorboard import SummaryWriter
@@ -58,10 +71,9 @@ MODELS_DIR      = "trained_models"
 for d in [PLOTS_DIR, LOG_DIR, MODELS_DIR]:
     os.makedirs(d, exist_ok=True)
 
-PARTICIPANTS_FILE_DS004504 = "/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv"
-PARTICIPANTS_FILE_DS003800 = "/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv"
-
-torch.autograd.set_detect_anomaly(True)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PARTICIPANTS_FILE_DS004504 = os.path.join(BASE_DIR, "ds004504", "participants.tsv")
+PARTICIPANTS_FILE_DS003800 = os.path.join(BASE_DIR, "ds003800", "participants.tsv")
 
 #############################################
 # 1) LOAD PARTICIPANT LABELS
@@ -185,18 +197,126 @@ def create_pyg_dataset(gnn_list, y, ch_names_list):
     return pyg_data_list
 
 #############################################
-# 4) MLP Classification - scikit-learn
+# HELPER: Compute class weights for CE loss
 #############################################
-def train_mlp_tb(X_train, y_train, X_val, y_val, epochs=200, log_dir=None):
-    from sklearn.neural_network import MLPClassifier
-    from sklearn.metrics import log_loss
+def compute_class_weights(y, device):
+    """Compute inverse-frequency class weights for CrossEntropyLoss."""
+    classes, counts = np.unique(y, return_counts=True)
+    weights = 1.0 / counts.astype(np.float32)
+    weights = weights / weights.sum() * len(classes)  # normalize so mean weight = 1
+    return torch.tensor(weights, dtype=torch.float, device=device)
 
+#############################################
+# MIXUP AUGMENTATION
+#############################################
+def mixup_data(x, y, alpha=0.2):
+    """Apply mixup augmentation to a batch."""
+    lam = np.random.beta(alpha, alpha) if alpha > 0 else 1.0
+    idx = torch.randperm(x.size(0))
+    mixed_x = lam * x + (1 - lam) * x[idx]
+    y_a, y_b = y, y[idx]
+    return mixed_x, y_a, y_b, lam
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    """Compute mixup loss."""
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
+#############################################
+# 4) TORCH MLP MODEL (PyTorch replacement)
+#############################################
+class TorchMLP(nn.Module):
+    def __init__(self, input_dim, num_classes):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(64, 32),
+            nn.GELU(),
+            nn.Linear(32, num_classes),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def train_mlp_torch(X_train, y_train, X_val, y_val, input_dim, num_classes,
+                    epochs=200, patience=30, log_dir=None, device="cpu"):
+    """Train TorchMLP with AdamW, CosineAnnealingWarmRestarts, label smoothing, mixup."""
     if log_dir is None:
         log_dir = "logs/mlp_fold"
     writer = SummaryWriter(log_dir=log_dir)
 
+    X_train_t = torch.tensor(X_train, dtype=torch.float, device=device)
+    y_train_t = torch.tensor(y_train, dtype=torch.long, device=device)
+    X_val_t   = torch.tensor(X_val,   dtype=torch.float, device=device)
+    y_val_t   = torch.tensor(y_val,   dtype=torch.long, device=device)
+
+    model = TorchMLP(input_dim, num_classes).to(device)
+
+    class_weights = compute_class_weights(y_train, device)
+    loss_fn = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
+
+    optimizer = AdamW(model.parameters(), lr=1e-3, weight_decay=1e-3)
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2)
+
+    train_loss_history = []
+    val_loss_history = []
+
+    best_val_loss = float('inf')
+    best_epoch = 0
+    best_state = None
+
+    for epoch in range(1, epochs + 1):
+        model.train()
+        optimizer.zero_grad()
+
+        # Mixup augmentation
+        mixed_x, y_a, y_b, lam = mixup_data(X_train_t, y_train_t, alpha=0.2)
+        logits = model(mixed_x)
+        loss = mixup_criterion(loss_fn, logits, y_a, y_b, lam)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        scheduler.step()
+
+        model.eval()
+        with torch.no_grad():
+            train_proba = F.softmax(model(X_train_t), dim=1).cpu().numpy()
+            train_loss = log_loss(y_train, train_proba)
+            val_proba = F.softmax(model(X_val_t), dim=1).cpu().numpy()
+            val_loss = log_loss(y_val, val_proba)
+
+        train_loss_history.append(train_loss)
+        val_loss_history.append(val_loss)
+        writer.add_scalar("MLP/Train_Loss", train_loss, epoch)
+        writer.add_scalar("MLP/Val_Loss", val_loss, epoch)
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_epoch = epoch
+            best_state = copy.deepcopy(model.state_dict())
+        elif epoch - best_epoch >= patience:
+            print(f"  [MLP] Early stopping at epoch {epoch} (best epoch: {best_epoch})")
+            break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    writer.close()
+    return model, train_loss_history, val_loss_history
+
+
+def train_sklearn_mlp_fallback(X_train, y_train, X_val, y_val, epochs=200, patience=30):
+    """Train a fallback sklearn MLP for backward compatibility."""
     mlp = MLPClassifier(
-        hidden_layer_sizes=(26,14),
+        hidden_layer_sizes=(64, 32),
         activation='logistic',
         solver='adam',
         max_iter=1,
@@ -205,33 +325,32 @@ def train_mlp_tb(X_train, y_train, X_val, y_val, epochs=200, log_dir=None):
         random_state=5
     )
     classes = np.unique(y_train)
-    train_loss_history = []
-    val_loss_history = []
+    best_val_loss = float('inf')
+    best_epoch = 0
+    best_coefs = None
+    best_intercepts = None
 
-    for epoch in range(1, epochs+1):
+    for epoch in range(1, epochs + 1):
         mlp.partial_fit(X_train, y_train, classes=classes)
-
-        y_train_proba = mlp.predict_proba(X_train)
-        train_loss = log_loss(y_train, y_train_proba)
-
         y_val_proba = mlp.predict_proba(X_val)
         val_loss = log_loss(y_val, y_val_proba)
 
-        train_loss_history.append(train_loss)
-        val_loss_history.append(val_loss)
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_epoch = epoch
+            best_coefs = [c.copy() for c in mlp.coefs_]
+            best_intercepts = [b.copy() for b in mlp.intercepts_]
+        elif epoch - best_epoch >= patience:
+            break
 
-        writer.add_scalar("MLP/Train_Loss", train_loss, epoch)
-        writer.add_scalar("MLP/Val_Loss", val_loss, epoch)
+    if best_coefs is not None:
+        mlp.coefs_ = best_coefs
+        mlp.intercepts_ = best_intercepts
 
-    writer.close()
-    model_path = os.path.join(MODELS_DIR, "mlp_model.pkl")
-    import joblib
-    joblib.dump(mlp, model_path)
-    print(f"[INFO] Saved MLP model checkpoint to {model_path}")
-    return mlp, train_loss_history, val_loss_history
+    return mlp
 
 #############################################
-# 5) EXTENDED QSUP MODEL (PyTorch)
+# 5) EXTENDED QSUP v2 MODEL (PyTorch)
 #############################################
 class ExtendedQSUP(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_classes,
@@ -239,10 +358,12 @@ class ExtendedQSUP(nn.Module):
                  phase_per_dim=False, self_modulation_steps=2,
                  topk=8):
         """
-        Extended QSUP Model:
-          - Uses multiple wave guesses.
-          - Applies ArcBell activation, partial normalization, dynamic phase rotation, gating, etc.
-          - Final classification is performed on the "measured" superposition.
+        Extended QSUP v2 Model:
+          - Uses multiple wave guesses with spectral-normed Linear layers.
+          - LayerNorm on wavefunction outputs before ArcBell activation.
+          - Learnable temperature in interference softmax.
+          - Leaky residual in self-modulation gating.
+          - 2-layer classifier head with GELU.
         """
         super().__init__()
         self.input_dim = input_dim
@@ -254,9 +375,21 @@ class ExtendedQSUP(nn.Module):
         self.self_modulation_steps = self_modulation_steps
         self.topk = topk
 
-        self.wavefunction_nets = nn.ModuleList([
-            nn.Linear(input_dim, 2 * hidden_dim) for _ in range(num_wavefunctions)
+        # Wavefunction nets with spectral norm
+        self.wavefunction_nets = nn.ModuleList()
+        for _ in range(num_wavefunctions):
+            layer = nn.Linear(input_dim, 2 * hidden_dim)
+            layer = parametrizations.spectral_norm(layer)
+            self.wavefunction_nets.append(layer)
+
+        # LayerNorm applied to each wavefunction net output before ArcBell
+        self.layer_norms = nn.ModuleList([
+            nn.LayerNorm(2 * hidden_dim) for _ in range(num_wavefunctions)
         ])
+
+        # Learnable temperature for interference softmax
+        self.temperature = nn.Parameter(torch.ones(1))
+
         if phase_per_dim:
             self.phases = nn.Parameter(torch.zeros(num_wavefunctions, hidden_dim))
         else:
@@ -267,9 +400,18 @@ class ExtendedQSUP(nn.Module):
         else:
             self.gating_net = None
 
-        self.classifier = nn.Linear(hidden_dim, num_classes)
-        nn.init.constant_(self.classifier.bias, 0.0)
-        self.classifier.bias.data[1] = 0.75  # Slight bias for AD
+        self.dropout = nn.Dropout(0.1)
+
+        # 2-layer classifier head
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_classes),
+        )
+        # Initialize final layer bias for AD
+        nn.init.constant_(self.classifier[-1].bias, 0.0)
+        self.classifier[-1].bias.data[1] = 0.75
 
     def forward(self, x):
         batch_size = x.size(0)
@@ -279,7 +421,8 @@ class ExtendedQSUP(nn.Module):
         wave_i_list = []
         for s in range(self.num_wavefunctions):
             out = self.wavefunction_nets[s](x)    # shape: (batch, 2*hidden_dim)
-            out = torch.exp(-out * out)           # ArcBell
+            out = self.layer_norms[s](out)         # LayerNorm before ArcBell
+            out = torch.exp(-out * out)            # ArcBell
             alpha = out[:, :self.hidden_dim]
             beta  = out[:, self.hidden_dim:]
             norm_sq = torch.sum(alpha**2 + beta**2, dim=1, keepdim=True) + eps
@@ -306,7 +449,8 @@ class ExtendedQSUP(nn.Module):
         dot_prod = torch.sum(real_stack * mean_real.unsqueeze(1), dim=2, keepdim=True)
         cosine_sim = dot_prod / (wave_norms * mean_norm)
         cosine_sim = cosine_sim.squeeze(2)
-        interference_weights = F.softmax(cosine_sim, dim=1).unsqueeze(2)
+        # Learnable temperature in interference softmax
+        interference_weights = F.softmax(cosine_sim / self.temperature, dim=1).unsqueeze(2)
 
         sup_real = torch.sum(real_stack * interference_weights, dim=1)
         sup_imag = torch.sum(imag_stack * interference_weights, dim=1)
@@ -315,8 +459,77 @@ class ExtendedQSUP(nn.Module):
             for _ in range(self.self_modulation_steps):
                 mag = torch.sqrt(sup_real**2 + sup_imag**2 + eps)
                 gate = torch.sigmoid(self.gating_net(mag))
-                sup_real = sup_real * gate
-                sup_imag = sup_imag * gate
+                # Leaky residual connection in gating
+                sup_real = sup_real * gate + sup_real * 0.1
+                sup_imag = sup_imag * gate + sup_imag * 0.1
+
+        mag_sq = sup_real**2 + sup_imag**2
+        if self.topk > 0 and self.topk < self.hidden_dim:
+            vals, inds = torch.topk(mag_sq, self.topk, dim=1)
+            mask = torch.zeros_like(mag_sq).scatter_(1, inds, 1.0)
+            masked = mag_sq * mask
+            sums = torch.sum(masked, dim=1, keepdim=True) + eps
+            probs = masked / sums
+        else:
+            sums = torch.sum(mag_sq, dim=1, keepdim=True) + eps
+            probs = mag_sq / sums
+
+        probs = self.dropout(probs)
+        logits = self.classifier(probs)
+        return logits
+
+    def forward_with_internals(self, x):
+        """Forward pass that also returns internal states for visualization."""
+        batch_size = x.size(0)
+        eps = 1e-8
+
+        wave_r_list = []
+        wave_i_list = []
+        wave_magnitudes = []
+        for s in range(self.num_wavefunctions):
+            out = self.wavefunction_nets[s](x)
+            out = self.layer_norms[s](out)
+            out = torch.exp(-out * out)
+            alpha = out[:, :self.hidden_dim]
+            beta  = out[:, self.hidden_dim:]
+            norm_sq = torch.sum(alpha**2 + beta**2, dim=1, keepdim=True) + eps
+            factor = torch.sqrt((self.partial_norm**2) / norm_sq)
+            alpha = alpha * factor
+            beta  = beta * factor
+
+            mag = torch.sqrt(alpha**2 + beta**2)
+            wave_magnitudes.append(mag)
+
+            if self.phase_per_dim:
+                phase = self.phases[s].unsqueeze(0)
+            else:
+                phase = self.phases[s]
+            wave_r = alpha * torch.cos(phase) - beta * torch.sin(phase)
+            wave_i = alpha * torch.sin(phase) + beta * torch.cos(phase)
+            wave_r_list.append(wave_r)
+            wave_i_list.append(wave_i)
+
+        real_stack = torch.stack(wave_r_list, dim=1)
+        imag_stack = torch.stack(wave_i_list, dim=1)
+
+        mean_real = torch.mean(real_stack, dim=1)
+        mean_norm = torch.sqrt(torch.sum(mean_real**2, dim=1, keepdim=True)) + eps
+        mean_norm = mean_norm.unsqueeze(1)
+        wave_norms = torch.sqrt(torch.sum(real_stack**2, dim=2, keepdim=True)) + eps
+        dot_prod = torch.sum(real_stack * mean_real.unsqueeze(1), dim=2, keepdim=True)
+        cosine_sim = dot_prod / (wave_norms * mean_norm)
+        cosine_sim = cosine_sim.squeeze(2)
+        interference_weights = F.softmax(cosine_sim / self.temperature, dim=1).unsqueeze(2)
+
+        sup_real = torch.sum(real_stack * interference_weights, dim=1)
+        sup_imag = torch.sum(imag_stack * interference_weights, dim=1)
+
+        if self.self_modulation_steps > 0 and self.gating_net is not None:
+            for _ in range(self.self_modulation_steps):
+                mag = torch.sqrt(sup_real**2 + sup_imag**2 + eps)
+                gate = torch.sigmoid(self.gating_net(mag))
+                sup_real = sup_real * gate + sup_real * 0.1
+                sup_imag = sup_imag * gate + sup_imag * 0.1
 
         mag_sq = sup_real**2 + sup_imag**2
         if self.topk > 0 and self.topk < self.hidden_dim:
@@ -330,14 +543,22 @@ class ExtendedQSUP(nn.Module):
             probs = mag_sq / sums
 
         logits = self.classifier(probs)
-        return logits
+
+        internals = {
+            'wave_magnitudes': torch.stack(wave_magnitudes, dim=1),  # (batch, num_wf, hidden_dim)
+            'interference_weights': interference_weights.squeeze(2),  # (batch, num_wf)
+            'phases': self.phases.detach(),
+            'probs': probs,
+        }
+        return logits, internals
+
 
 def train_extended_qsup_tb(
     X_train, y_train, X_val, y_val,
     input_dim, hidden_dim, num_classes,
     num_wavefunctions=3, partial_norm=1.5,
     phase_per_dim=False, self_modulation_steps=2, topk=8,
-    epochs=150, log_dir="logs/qsup_fold", device="cpu"):
+    epochs=150, patience=25, log_dir="logs/qsup_fold", device="cpu"):
 
     writer = SummaryWriter(log_dir=log_dir)
 
@@ -355,22 +576,35 @@ def train_extended_qsup_tb(
         topk=topk
     ).to(device)
 
-    optimizer = TorchAdam(model.parameters(), lr=1e-3)
-    loss_fn = nn.CrossEntropyLoss()
+    # Class-weighted loss with label smoothing
+    class_weights = compute_class_weights(y_train, device)
+    loss_fn = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
 
-    from sklearn.metrics import log_loss
+    optimizer = TorchAdam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
     train_loss_history = []
     val_loss_history = []
 
-    for epoch in range(1, epochs+1):
+    best_val_loss = float('inf')
+    best_epoch = 0
+    best_state = None
+
+    for epoch in range(1, epochs + 1):
         model.train()
         optimizer.zero_grad()
-        logits = model(X_train_t)
-        loss = loss_fn(logits, y_train_t)
-        loss.backward()
-        optimizer.step()
 
+        # Mixup augmentation
+        mixed_x, y_a, y_b, lam = mixup_data(X_train_t, y_train_t, alpha=0.2)
+        logits = model(mixed_x)
+        loss = mixup_criterion(loss_fn, logits, y_a, y_b, lam)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        scheduler.step()
+
+        model.eval()
         with torch.no_grad():
             train_proba = F.softmax(model(X_train_t), dim=1).cpu().numpy()
             train_loss = log_loss(y_train, train_proba)
@@ -383,45 +617,130 @@ def train_extended_qsup_tb(
         writer.add_scalar("ExtendedQSUP/Train_Loss", train_loss, epoch)
         writer.add_scalar("ExtendedQSUP/Val_Loss", val_loss, epoch)
 
+        # Early stopping
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_epoch = epoch
+            best_state = copy.deepcopy(model.state_dict())
+        elif epoch - best_epoch >= patience:
+            print(f"  [QSUP] Early stopping at epoch {epoch} (best epoch: {best_epoch})")
+            break
+
+    # Restore best model
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    # --- Stochastic Weight Averaging (SWA) for 20 more epochs ---
+    print("  [QSUP] Starting SWA phase (20 epochs)...")
+    swa_model = AveragedModel(model)
+    swa_scheduler = SWALR(optimizer, swa_lr=1e-4)
+
+    for swa_epoch in range(1, 21):
+        model.train()
+        optimizer.zero_grad()
+
+        mixed_x, y_a, y_b, lam = mixup_data(X_train_t, y_train_t, alpha=0.2)
+        logits = model(mixed_x)
+        loss = mixup_criterion(loss_fn, logits, y_a, y_b, lam)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        swa_scheduler.step()
+        swa_model.update_parameters(model)
+
+    # Copy SWA averaged params back to model
+    # Since we do full-batch (no BN update needed for QSUP which has no BN),
+    # we just copy the averaged parameters.
+    model.load_state_dict(
+        {k.replace('module.', ''): v for k, v in swa_model.state_dict().items()
+         if k.startswith('module.')}
+    )
+
     writer.close()
     return model, train_loss_history, val_loss_history
 
 #############################################
-# 6) CROSS-VALIDATION FOR MLP
+# 6) CROSS-VALIDATION FOR MLP (PyTorch)
 #############################################
 def cv_classification_MLP(CCV, y):
-    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=5)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
     all_y_true = []
     all_y_pred = []
+    all_y_proba = []
     fold_idx = 1
+
+    best_val_auc = -1.0
+    best_mlp_state = None
+    best_mlp_scaler = None
+    best_sklearn_mlp = None
+
+    input_dim = CCV.shape[1]
+    num_classes = len(np.unique(y))
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    mlp_histories = []
+    fold_accuracies = []
+    fold_aucs = []
 
     for train_idx, test_idx in skf.split(CCV, y):
         X_train, X_test = CCV[train_idx], CCV[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
 
-        smote = SMOTE(random_state=5)
-        X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
-
+        # Scale BEFORE SMOTE (correct order)
         scaler = StandardScaler()
-        X_train_res = scaler.fit_transform(X_train_res)
+        X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
 
+        smote = SMOTE(random_state=5)
+        X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
+
         log_dir = os.path.join(LOG_DIR, f"mlp_fold_{fold_idx}")
-        mlp, train_loss_hist, val_loss_hist = train_mlp_tb(
+
+        # Train PyTorch MLP
+        mlp_model, train_loss_hist, val_loss_hist = train_mlp_torch(
             X_train_res, y_train_res, X_test_scaled, y_test,
-            epochs=200, log_dir=log_dir
+            input_dim=input_dim, num_classes=num_classes,
+            epochs=200, patience=30, log_dir=log_dir, device=device
         )
 
-        y_pred = mlp.predict(X_test_scaled)
-        all_y_true.extend(y_test)
-        all_y_pred.extend(y_pred)
+        mlp_histories.append((train_loss_hist, val_loss_hist))
 
-        y_proba = mlp.predict_proba(X_test_scaled)[:, 1]
-        fpr, tpr, _ = roc_curve(y_test, y_proba)
+        # Evaluate on test set
+        X_test_tensor = torch.tensor(X_test_scaled, dtype=torch.float, device=device)
+        mlp_model.eval()
+        with torch.no_grad():
+            test_logits = mlp_model(X_test_tensor)
+            test_proba = F.softmax(test_logits, dim=1).cpu().numpy()
+        test_preds = test_logits.argmax(dim=1).cpu().numpy()
+
+        all_y_true.extend(y_test)
+        all_y_pred.extend(test_preds)
+        all_y_proba.extend(test_proba[:, 1])
+
+        fold_acc = accuracy_score(y_test, test_preds)
+        fold_auc = roc_auc_score(y_test, test_proba[:, 1])
+        fold_accuracies.append(fold_acc)
+        fold_aucs.append(fold_auc)
+
+        # Track best model by val AUC
+        if fold_auc > best_val_auc:
+            best_val_auc = fold_auc
+            best_mlp_state = copy.deepcopy(mlp_model.state_dict())
+            best_mlp_scaler = scaler
+
+        # Also train sklearn fallback on same fold if this is best
+        if fold_auc >= best_val_auc:
+            best_sklearn_mlp = train_sklearn_mlp_fallback(
+                X_train_res, y_train_res, X_test_scaled, y_test,
+                epochs=200, patience=30
+            )
+
+        fpr, tpr, _ = roc_curve(y_test, test_proba[:, 1])
         plt.figure()
         plt.plot(fpr, tpr, marker='o', label="MLP")
-        plt.plot([0,1],[0,1],'k--')
-        plt.title(f"MLP ROC Fold {fold_idx}")
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.title(f"MLP ROC Fold {fold_idx} (AUC={fold_auc:.3f})")
         plt.xlabel("FPR")
         plt.ylabel("TPR")
         plt.legend()
@@ -440,91 +759,376 @@ def cv_classification_MLP(CCV, y):
         plt.savefig(os.path.join(PLOTS_DIR, f"mlp_loss_fold_{fold_idx}.png"))
         plt.close()
 
-        print(f"[Fold {fold_idx}] MLP Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+        print(f"[Fold {fold_idx}] MLP Accuracy: {fold_acc:.4f}, AUC: {fold_auc:.4f}")
         fold_idx += 1
 
     overall_acc = accuracy_score(all_y_true, all_y_pred)
     print("\n--- MLP Overall Classification ---")
     print(confusion_matrix(all_y_true, all_y_pred))
-    print(classification_report(all_y_true, all_y_pred, target_names=['Control','Alzheimer']))
+    print(classification_report(all_y_true, all_y_pred, target_names=['Control', 'Alzheimer']))
     print(f"Overall MLP Accuracy: {overall_acc:.4f}")
+
+    # Save best PyTorch MLP model
+    if best_mlp_state is not None:
+        mlp_pth_path = os.path.join(MODELS_DIR, "mlp_model.pth")
+        torch.save(best_mlp_state, mlp_pth_path)
+        print(f"[INFO] Saved best MLP state_dict (AUC={best_val_auc:.4f}) to {mlp_pth_path}")
+
+    # Save fallback sklearn MLP
+    if best_sklearn_mlp is not None:
+        mlp_pkl_path = os.path.join(MODELS_DIR, "mlp_model.pkl")
+        joblib.dump(best_sklearn_mlp, mlp_pkl_path)
+        print(f"[INFO] Saved fallback sklearn MLP to {mlp_pkl_path}")
+
+    if best_mlp_scaler is not None:
+        scaler_path = os.path.join(MODELS_DIR, "mlp_scaler.joblib")
+        joblib.dump(best_mlp_scaler, scaler_path)
+        print(f"[INFO] Saved MLP scaler to {scaler_path}")
+
+    return (np.array(all_y_true), np.array(all_y_pred), np.array(all_y_proba),
+            mlp_histories, fold_accuracies, fold_aucs)
 
 #############################################
 # 7) CROSS-VALIDATION FOR Extended QSUP
 #############################################
 def cv_classification_ExtendedQSUP(CCV, y):
     """
-    Trains ExtendedQSUP with 3-fold cross validation.
-    We'll save the final fold's model (state_dict) as "qsup_model.pth".
+    Trains ExtendedQSUP v2 with 5-fold cross validation.
+    Saves the best fold's model (highest val AUC) as "qsup_model.pth".
     """
-    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=5)
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
     all_y_true = []
     all_y_pred = []
+    all_y_proba = []
     fold_idx = 1
 
     input_dim = CCV.shape[1]
     n_classes = len(np.unique(y))
-    final_qsup_model = None  # We'll store the last fold's model here.
+
+    best_val_auc = -1.0
+    best_qsup_state = None
+    best_qsup_scaler = None
+    best_qsup_model = None
+    # Store model config for saving
+    qsup_config = dict(
+        input_dim=input_dim, hidden_dim=32, num_classes=n_classes,
+        num_wavefunctions=6, partial_norm=1.5,
+        phase_per_dim=True, self_modulation_steps=2, topk=8
+    )
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    qsup_histories = []
+    fold_accuracies = []
+    fold_aucs = []
 
     for train_idx, test_idx in skf.split(CCV, y):
         X_train, X_test = CCV[train_idx], CCV[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
 
-        smote = SMOTE(random_state=5)
-        X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
+        # Scale BEFORE SMOTE (correct order)
         scaler = StandardScaler()
-        X_train_res = scaler.fit_transform(X_train_res)
+        X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
 
+        smote = SMOTE(random_state=5)
+        X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
+
         log_dir = os.path.join(LOG_DIR, f"qsup_fold_{fold_idx}")
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         qsup_model, train_loss_hist, val_loss_hist = train_extended_qsup_tb(
             X_train_res, y_train_res, X_test_scaled, y_test,
-            input_dim=input_dim,
-            hidden_dim=32,
-            num_classes=n_classes,
-            num_wavefunctions=6,       # from your script
-            partial_norm=1.5,
-            phase_per_dim=True,
-            self_modulation_steps=2,
-            topk=8,
+            input_dim=qsup_config['input_dim'],
+            hidden_dim=qsup_config['hidden_dim'],
+            num_classes=qsup_config['num_classes'],
+            num_wavefunctions=qsup_config['num_wavefunctions'],
+            partial_norm=qsup_config['partial_norm'],
+            phase_per_dim=qsup_config['phase_per_dim'],
+            self_modulation_steps=qsup_config['self_modulation_steps'],
+            topk=qsup_config['topk'],
             epochs=200,
+            patience=25,
             log_dir=log_dir,
             device=device
         )
+
+        qsup_histories.append((train_loss_hist, val_loss_hist))
 
         # Evaluate on test set
         X_test_tensor = torch.tensor(X_test_scaled, dtype=torch.float, device=device)
         qsup_model.eval()
         with torch.no_grad():
             test_logits = qsup_model(X_test_tensor)
+            test_proba = F.softmax(test_logits, dim=1).cpu().numpy()
         test_preds = test_logits.argmax(dim=1).cpu().numpy()
 
         all_y_true.extend(y_test)
         all_y_pred.extend(test_preds)
-        print(f"[Fold {fold_idx}] Extended QSUP Accuracy: {accuracy_score(y_test, test_preds):.4f}")
-        fold_idx += 1
+        all_y_proba.extend(test_proba[:, 1])
 
-        # Keep a reference to the last fold's model
-        final_qsup_model = qsup_model
+        fold_acc = accuracy_score(y_test, test_preds)
+        fold_auc = roc_auc_score(y_test, test_proba[:, 1])
+        fold_accuracies.append(fold_acc)
+        fold_aucs.append(fold_auc)
+
+        # Track best model by val AUC
+        if fold_auc > best_val_auc:
+            best_val_auc = fold_auc
+            best_qsup_state = copy.deepcopy(qsup_model.state_dict())
+            best_qsup_scaler = scaler
+            best_qsup_model = qsup_model
+
+        # ROC curve for QSUP
+        fpr, tpr, _ = roc_curve(y_test, test_proba[:, 1])
+        plt.figure()
+        plt.plot(fpr, tpr, marker='o', label="QSUP")
+        plt.plot([0, 1], [0, 1], 'k--')
+        plt.title(f"QSUP ROC Fold {fold_idx} (AUC={fold_auc:.3f})")
+        plt.xlabel("FPR")
+        plt.ylabel("TPR")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(PLOTS_DIR, f"qsup_roc_fold_{fold_idx}.png"))
+        plt.close()
+
+        # Loss plot for QSUP
+        plt.figure()
+        plt.plot(train_loss_hist, marker='o', label="Train Loss")
+        plt.plot(val_loss_hist,   marker='x', label="Val Loss")
+        plt.xlabel("Epoch")
+        plt.ylabel("Log Loss")
+        plt.title(f"QSUP Train/Val Loss - Fold {fold_idx}")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(PLOTS_DIR, f"qsup_loss_fold_{fold_idx}.png"))
+        plt.close()
+
+        print(f"[Fold {fold_idx}] Extended QSUP Accuracy: {fold_acc:.4f}, AUC: {fold_auc:.4f}")
+        fold_idx += 1
 
     overall_acc = accuracy_score(all_y_true, all_y_pred)
     print("\n--- Extended QSUP Overall Classification ---")
     print(confusion_matrix(all_y_true, all_y_pred))
-    print(classification_report(all_y_true, all_y_pred, target_names=['Control','Alzheimer']))
+    print(classification_report(all_y_true, all_y_pred, target_names=['Control', 'Alzheimer']))
     print(f"Overall Extended QSUP Accuracy: {overall_acc:.4f}")
 
-    # -------------------------
-    # Save the final fold's QSUP model's state_dict
-    # -------------------------
-    if final_qsup_model is not None:
+    # Save best QSUP model state_dict and scaler
+    if best_qsup_state is not None:
         qsup_state_path = os.path.join(MODELS_DIR, "qsup_model.pth")
-        torch.save(final_qsup_model.state_dict(), qsup_state_path)
-        print(f"[INFO] Saved QSUP state_dict to {qsup_state_path}")
+        torch.save(best_qsup_state, qsup_state_path)
+        print(f"[INFO] Saved best QSUP state_dict (AUC={best_val_auc:.4f}) to {qsup_state_path}")
+    if best_qsup_scaler is not None:
+        scaler_path = os.path.join(MODELS_DIR, "qsup_scaler.joblib")
+        joblib.dump(best_qsup_scaler, scaler_path)
+        print(f"[INFO] Saved QSUP scaler to {scaler_path}")
+
+    return (np.array(all_y_true), np.array(all_y_pred), np.array(all_y_proba),
+            qsup_histories, fold_accuracies, fold_aucs, best_qsup_model, best_qsup_scaler)
 
 #############################################
-# 8) MAIN
+# 8) VISUALIZATION FUNCTIONS
+#############################################
+
+def plot_confusion_matrices(all_y_true_mlp, all_y_pred_mlp, all_y_true_qsup, all_y_pred_qsup):
+    """Side-by-side confusion matrix heatmaps for MLP and QSUP."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    cm_mlp = confusion_matrix(all_y_true_mlp, all_y_pred_mlp)
+    sns.heatmap(cm_mlp, annot=True, fmt='d', cmap='Blues', ax=axes[0],
+                xticklabels=['Control', 'Alzheimer'], yticklabels=['Control', 'Alzheimer'])
+    axes[0].set_title('MLP Confusion Matrix')
+    axes[0].set_xlabel('Predicted')
+    axes[0].set_ylabel('True')
+
+    cm_qsup = confusion_matrix(all_y_true_qsup, all_y_pred_qsup)
+    sns.heatmap(cm_qsup, annot=True, fmt='d', cmap='Oranges', ax=axes[1],
+                xticklabels=['Control', 'Alzheimer'], yticklabels=['Control', 'Alzheimer'])
+    axes[1].set_title('QSUP Confusion Matrix')
+    axes[1].set_xlabel('Predicted')
+    axes[1].set_ylabel('True')
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "confusion_matrices.png"), dpi=150)
+    plt.close()
+    print("[VIZ] Saved confusion_matrices.png")
+
+
+def plot_training_comparison(mlp_histories, qsup_histories):
+    """Overlay all fold loss curves for both models in a 2x1 subplot."""
+    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple']
+
+    # MLP folds
+    for i, (train_hist, val_hist) in enumerate(mlp_histories):
+        c = colors[i % len(colors)]
+        axes[0].plot(train_hist, color=c, alpha=0.8, label=f'Fold {i+1} Train')
+        axes[0].plot(val_hist, color=c, linestyle='--', alpha=0.8, label=f'Fold {i+1} Val')
+    axes[0].set_title('MLP Training Curves (All Folds)')
+    axes[0].set_xlabel('Epoch')
+    axes[0].set_ylabel('Log Loss')
+    axes[0].legend(fontsize=8)
+    axes[0].grid(True, alpha=0.3)
+
+    # QSUP folds
+    for i, (train_hist, val_hist) in enumerate(qsup_histories):
+        c = colors[i % len(colors)]
+        axes[1].plot(train_hist, color=c, alpha=0.8, label=f'Fold {i+1} Train')
+        axes[1].plot(val_hist, color=c, linestyle='--', alpha=0.8, label=f'Fold {i+1} Val')
+    axes[1].set_title('QSUP Training Curves (All Folds)')
+    axes[1].set_xlabel('Epoch')
+    axes[1].set_ylabel('Log Loss')
+    axes[1].legend(fontsize=8)
+    axes[1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "training_comparison.png"), dpi=150)
+    plt.close()
+    print("[VIZ] Saved training_comparison.png")
+
+
+def plot_qsup_internals(model, X_sample, feature_names=None):
+    """Visualize QSUP internal states: wavefunction magnitudes, interference weights, phases, probs."""
+    device = next(model.parameters()).device
+    X_t = torch.tensor(X_sample, dtype=torch.float, device=device)
+
+    model.eval()
+    with torch.no_grad():
+        _, internals = model.forward_with_internals(X_t)
+
+    wave_mags = internals['wave_magnitudes'].cpu().numpy()   # (batch, num_wf, hidden_dim)
+    interf_w = internals['interference_weights'].cpu().numpy()  # (batch, num_wf)
+    phases = internals['phases'].cpu().numpy()                  # (num_wf, dim)
+    probs = internals['probs'].cpu().numpy()                    # (batch, hidden_dim)
+
+    # Average across batch
+    avg_mags = wave_mags.mean(axis=0)        # (num_wf, hidden_dim)
+    avg_interf = interf_w.mean(axis=0)       # (num_wf,)
+    avg_probs = probs.mean(axis=0)           # (hidden_dim,)
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # Subplot 1: Wavefunction magnitudes heatmap
+    sns.heatmap(avg_mags, ax=axes[0, 0], cmap='viridis', cbar=True)
+    axes[0, 0].set_title('Wavefunction Magnitudes (avg over samples)')
+    axes[0, 0].set_xlabel('Hidden Dim')
+    axes[0, 0].set_ylabel('Wavefunction Index')
+
+    # Subplot 2: Interference weights as stacked bar
+    num_wf = avg_interf.shape[0]
+    axes[0, 1].bar(range(num_wf), avg_interf, color=[f'C{i}' for i in range(num_wf)])
+    axes[0, 1].set_title('Interference Weights (avg over samples)')
+    axes[0, 1].set_xlabel('Wavefunction Index')
+    axes[0, 1].set_ylabel('Weight')
+    axes[0, 1].set_xticks(range(num_wf))
+
+    # Subplot 3: Learned phases as polar plot
+    ax_polar = fig.add_subplot(2, 2, 3, projection='polar')
+    axes[1, 0].set_visible(False)
+    for wf_idx in range(phases.shape[0]):
+        phase_vals = phases[wf_idx].flatten()
+        # Plot first few phase values as points on polar plot
+        r = np.ones_like(phase_vals) * (wf_idx + 1)
+        ax_polar.scatter(phase_vals, r, alpha=0.6, s=15, label=f'WF {wf_idx}')
+    ax_polar.set_title('Learned Phase Values', pad=20)
+    ax_polar.legend(fontsize=7, loc='upper right', bbox_to_anchor=(1.3, 1.0))
+
+    # Subplot 4: Measurement probabilities bar chart
+    axes[1, 1].bar(range(len(avg_probs)), avg_probs, color='teal', alpha=0.8)
+    axes[1, 1].set_title('Measurement Probabilities (avg over samples)')
+    axes[1, 1].set_xlabel('Hidden Dim Index')
+    axes[1, 1].set_ylabel('Probability')
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "qsup_internals.png"), dpi=150)
+    plt.close()
+    print("[VIZ] Saved qsup_internals.png")
+
+
+def plot_feature_importance(model, X, y, feature_names):
+    """Gradient-based feature importance: average |grad(loss) w.r.t. input| across samples."""
+    device = next(model.parameters()).device
+    X_t = torch.tensor(X, dtype=torch.float, device=device, requires_grad=True)
+    y_t = torch.tensor(y, dtype=torch.long, device=device)
+
+    model.eval()
+    logits = model(X_t)
+    loss_fn = nn.CrossEntropyLoss()
+    loss = loss_fn(logits, y_t)
+    loss.backward()
+
+    grad_importance = X_t.grad.abs().mean(dim=0).cpu().numpy()
+
+    # Sort by importance
+    sorted_idx = np.argsort(grad_importance)
+    sorted_importance = grad_importance[sorted_idx]
+
+    if feature_names is not None and len(feature_names) == len(grad_importance):
+        sorted_names = [feature_names[i] for i in sorted_idx]
+    else:
+        sorted_names = [f"F{i}" for i in sorted_idx]
+
+    fig, ax = plt.subplots(figsize=(8, max(6, len(sorted_names) * 0.2)))
+    ax.barh(range(len(sorted_importance)), sorted_importance, color='steelblue', alpha=0.8)
+    ax.set_yticks(range(len(sorted_names)))
+    ax.set_yticklabels(sorted_names, fontsize=6)
+    ax.set_xlabel('Mean |Gradient|')
+    ax.set_title('Gradient-Based Feature Importance (QSUP)')
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "feature_importance.png"), dpi=150)
+    plt.close()
+    print("[VIZ] Saved feature_importance.png")
+
+
+def plot_embedding_tsne(CCV, y, title="CCV t-SNE"):
+    """t-SNE visualization of CCV colored by class."""
+    perplexity = min(30, len(y) - 1)
+    tsne = TSNE(n_components=2, random_state=5, perplexity=perplexity)
+    X_2d = tsne.fit_transform(CCV)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    mask_ctrl = y == 0
+    mask_ad = y == 1
+    ax.scatter(X_2d[mask_ctrl, 0], X_2d[mask_ctrl, 1], c='blue', alpha=0.7,
+               label='Control', edgecolors='k', linewidth=0.3, s=50)
+    ax.scatter(X_2d[mask_ad, 0], X_2d[mask_ad, 1], c='red', alpha=0.7,
+               label='Alzheimer', edgecolors='k', linewidth=0.3, s=50)
+    ax.set_title(title)
+    ax.set_xlabel('t-SNE 1')
+    ax.set_ylabel('t-SNE 2')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "tsne_embeddings.png"), dpi=150)
+    plt.close()
+    print("[VIZ] Saved tsne_embeddings.png")
+
+
+def plot_roc_comparison(all_y_true, all_y_proba_mlp, all_y_proba_qsup):
+    """Overlay MLP and QSUP ROC curves on a single plot."""
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    fpr_mlp, tpr_mlp, _ = roc_curve(all_y_true, all_y_proba_mlp)
+    auc_mlp = roc_auc_score(all_y_true, all_y_proba_mlp)
+    ax.plot(fpr_mlp, tpr_mlp, color='tab:blue', linewidth=2,
+            label=f'MLP (AUC = {auc_mlp:.3f})')
+
+    fpr_qsup, tpr_qsup, _ = roc_curve(all_y_true, all_y_proba_qsup)
+    auc_qsup = roc_auc_score(all_y_true, all_y_proba_qsup)
+    ax.plot(fpr_qsup, tpr_qsup, color='tab:orange', linewidth=2,
+            label=f'QSUP (AUC = {auc_qsup:.3f})')
+
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.5)
+    ax.set_title('ROC Comparison: MLP vs QSUP')
+    ax.set_xlabel('False Positive Rate')
+    ax.set_ylabel('True Positive Rate')
+    ax.legend(loc='lower right')
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "roc_comparison.png"), dpi=150)
+    plt.close()
+    print("[VIZ] Saved roc_comparison.png")
+
+#############################################
+# 9) MAIN
 #############################################
 def main():
     start_time = time.time()
@@ -552,27 +1156,67 @@ def main():
     hidden_channels = 32
     gcn_num_classes = 2
     gcn_model = GCNNet(in_channels, hidden_channels, gcn_num_classes).to(device)
+
+    # Class-weighted loss for GCN
+    gcn_labels = np.array([d.y.item() for d in pyg_dataset])
+    gcn_train_labels = gcn_labels[train_idx]
+    gcn_class_weights = compute_class_weights(gcn_train_labels, device)
+    gcn_loss_fn = nn.CrossEntropyLoss(weight=gcn_class_weights)
+
     optimizer = TorchAdam(gcn_model.parameters(), lr=10**-2.25)
     epochs_gcn = 100
 
+    # GCN early stopping
+    gcn_patience = 15
+    gcn_best_val_loss = float('inf')
+    gcn_best_epoch = 0
+    gcn_best_state = None
+
     print("[GCN] Training embeddings ...")
-    for epoch in range(1, epochs_gcn+1):
+    for epoch in range(1, epochs_gcn + 1):
         gcn_model.train()
         total_loss = 0
         for data in train_loader:
             data = data.to(device)
             optimizer.zero_grad()
             logits = gcn_model(data.x, data.edge_index, data.batch)
-            loss = F.cross_entropy(logits, data.y.view(-1))
+            loss = gcn_loss_fn(logits, data.y.view(-1))
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * data.num_graphs
         avg_loss = total_loss / len(train_loader.dataset)
-        if epoch % 5 == 0:
-            print(f"GCN Epoch {epoch}/{epochs_gcn} - Train Loss: {avg_loss:.4f}")
 
-    # Evaluate on val set or proceed:
-    # (optionally implement early stopping or do a final step)
+        # Validation loop
+        gcn_model.eval()
+        val_total_loss = 0
+        with torch.no_grad():
+            for data in val_loader:
+                data = data.to(device)
+                logits = gcn_model(data.x, data.edge_index, data.batch)
+                loss = gcn_loss_fn(logits, data.y.view(-1))
+                val_total_loss += loss.item() * data.num_graphs
+        avg_val_loss = val_total_loss / len(val_loader.dataset)
+
+        if epoch % 5 == 0:
+            print(f"GCN Epoch {epoch}/{epochs_gcn} - Train Loss: {avg_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+
+        # Early stopping check
+        if avg_val_loss < gcn_best_val_loss:
+            gcn_best_val_loss = avg_val_loss
+            gcn_best_epoch = epoch
+            gcn_best_state = copy.deepcopy(gcn_model.state_dict())
+        elif epoch - gcn_best_epoch >= gcn_patience:
+            print(f"[GCN] Early stopping at epoch {epoch} (best epoch: {gcn_best_epoch})")
+            break
+
+    # Restore best GCN weights
+    if gcn_best_state is not None:
+        gcn_model.load_state_dict(gcn_best_state)
+
+    # Save GCN model
+    gcn_state_path = os.path.join(MODELS_DIR, "gcn_model.pth")
+    torch.save(gcn_model.state_dict(), gcn_state_path)
+    print(f"[INFO] Saved GCN state_dict to {gcn_state_path}")
 
     # Extract embeddings for entire dataset
     print("[GCN] Extracting embeddings for entire dataset ...")
@@ -593,13 +1237,66 @@ def main():
     CCV = np.hstack((X_handcrafted, embeddings))
     print(f"[INFO] Final CCV shape: {CCV.shape}")
 
-    # 3-fold classification with MLP
-    print("\n=== 3-Fold Classification with MLP ===")
-    cv_classification_MLP(CCV, y)
+    # Build feature names for visualization
+    handcrafted_names = [f"HC_{i}" for i in range(X_handcrafted.shape[1])]
+    gcn_emb_names = [f"GCN_{i}" for i in range(embeddings.shape[1])]
+    feature_names = handcrafted_names + gcn_emb_names
 
-    # 3-fold classification with Extended QSUP
-    print("\n=== 3-Fold Classification with Extended QSUP ===")
-    cv_classification_ExtendedQSUP(CCV, y)
+    # 5-fold classification with MLP
+    print("\n=== 5-Fold Classification with MLP (PyTorch) ===")
+    (mlp_y_true, mlp_y_pred, mlp_y_proba,
+     mlp_histories, mlp_fold_accs, mlp_fold_aucs) = cv_classification_MLP(CCV, y)
+
+    # 5-fold classification with Extended QSUP
+    print("\n=== 5-Fold Classification with Extended QSUP v2 ===")
+    (qsup_y_true, qsup_y_pred, qsup_y_proba,
+     qsup_histories, qsup_fold_accs, qsup_fold_aucs,
+     best_qsup_model, best_qsup_scaler) = cv_classification_ExtendedQSUP(CCV, y)
+
+    # ===== VISUALIZATIONS =====
+    print("\n=== Generating Visualizations ===")
+
+    # a) Confusion matrices
+    plot_confusion_matrices(mlp_y_true, mlp_y_pred, qsup_y_true, qsup_y_pred)
+
+    # b) Training comparison
+    plot_training_comparison(mlp_histories, qsup_histories)
+
+    # c) QSUP internals
+    if best_qsup_model is not None and best_qsup_scaler is not None:
+        # Use a sample of scaled CCV for visualization
+        X_sample = best_qsup_scaler.transform(CCV)
+        plot_qsup_internals(best_qsup_model, X_sample[:20], feature_names=feature_names)
+
+        # d) Feature importance (gradient-based)
+        y_sample = y[:20]
+        plot_feature_importance(best_qsup_model, X_sample[:20], y_sample, feature_names)
+
+    # e) t-SNE embeddings
+    plot_embedding_tsne(CCV, y, title="CCV t-SNE (Control vs Alzheimer)")
+
+    # f) ROC comparison
+    plot_roc_comparison(mlp_y_true, mlp_y_proba, qsup_y_proba)
+
+    # ===== FINAL SUMMARY TABLE =====
+    print("\n" + "=" * 70)
+    print("FINAL SUMMARY: Per-Fold Accuracy and AUC")
+    print("=" * 70)
+    print(f"{'Fold':<8} {'MLP Acc':<12} {'MLP AUC':<12} {'QSUP Acc':<12} {'QSUP AUC':<12}")
+    print("-" * 70)
+    for i in range(5):
+        mlp_acc_str = f"{mlp_fold_accs[i]:.4f}" if i < len(mlp_fold_accs) else "N/A"
+        mlp_auc_str = f"{mlp_fold_aucs[i]:.4f}" if i < len(mlp_fold_aucs) else "N/A"
+        qsup_acc_str = f"{qsup_fold_accs[i]:.4f}" if i < len(qsup_fold_accs) else "N/A"
+        qsup_auc_str = f"{qsup_fold_aucs[i]:.4f}" if i < len(qsup_fold_aucs) else "N/A"
+        print(f"{i+1:<8} {mlp_acc_str:<12} {mlp_auc_str:<12} {qsup_acc_str:<12} {qsup_auc_str:<12}")
+    print("-" * 70)
+    mlp_mean_acc = np.mean(mlp_fold_accs) if mlp_fold_accs else 0
+    mlp_mean_auc = np.mean(mlp_fold_aucs) if mlp_fold_aucs else 0
+    qsup_mean_acc = np.mean(qsup_fold_accs) if qsup_fold_accs else 0
+    qsup_mean_auc = np.mean(qsup_fold_aucs) if qsup_fold_aucs else 0
+    print(f"{'Mean':<8} {mlp_mean_acc:<12.4f} {mlp_mean_auc:<12.4f} {qsup_mean_acc:<12.4f} {qsup_mean_auc:<12.4f}")
+    print("=" * 70)
 
     end_time = time.time()
     print(f"[DONE] total runtime: {end_time - start_time:.2f} seconds")

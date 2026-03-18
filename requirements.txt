@@ -1,15 +1,20 @@
-streamlit>=1.50.0
-numpy
-pandas
-scipy
-scikit-learn
-joblib
-mne  # EEG I/O (EEGLAB .set), may be heavy on Streamlit Cloud
+# Core dependencies
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+scikit-learn>=1.3
+joblib>=1.3
+mne>=1.5
+imbalanced-learn>=0.11
+matplotlib>=3.7
+tqdm>=4.65
+numba>=0.57
+streamlit>=1.30
 
-# Optional (uncomment to enable PyTorch/QSUP/GCN locally or on a host that supports it):
-# Install CPU PyTorch so QSUP can run on Streamlit Cloud (requires Python 3.11)
+# PyTorch (CPU) — for QSUP and GCN models
 torch --index-url https://download.pytorch.org/whl/cpu
-# torch-geometric
 
-# Note: Streamlit Community Cloud may not support installing torch/torch-geometric.
-# For full QSUP/GCN support, consider deploying on Render/Railway/HF Spaces with a custom image.
+# Server
+fastapi>=0.100
+uvicorn>=0.23
+websockets>=11.0

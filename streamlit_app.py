@@ -4,6 +4,7 @@ import time
 import json
 from datetime import datetime
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 # Optional heavy deps; app should degrade gracefully if missing
@@ -11,6 +12,7 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
+    import torch.nn.utils.parametrizations as parametrizations
     TORCH_AVAILABLE = True
 except Exception:
     TORCH_AVAILABLE = False
@@ -40,6 +42,7 @@ MODELS_DIR = "trained_models"
 PLOTS_DIR = "plots"
 
 MLP_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_model.pkl")
+MLP_PTH_MODEL_PATH = os.path.join(MODELS_DIR, "mlp_model.pth")
 QSUP_MODEL_PATH = os.path.join(MODELS_DIR, "qsup_model.pth")
 GCN_MODEL_PATH = os.path.join(MODELS_DIR, "gcn_model.pth")
 PCA_MODEL_PATH = os.path.join(MODELS_DIR, "pca_model.joblib")
@@ -70,10 +73,10 @@ if TORCH_AVAILABLE and PYG_AVAILABLE:
     class GCNNet(nn.Module):
         def __init__(self, in_channels, hidden_channels, num_classes):
             super().__init__()
-            self.conv1 = GCNConv(in_channels, hidden_channels)
-            self.conv2 = GCNConv(hidden_channels, hidden_channels)
-            self.conv3 = GCNConv(hidden_channels, hidden_channels)
-            self.lin   = nn.Linear(hidden_channels, num_classes)
+            self.conv1 = GCNConv(in_channels, hidden_channels, bias=False)
+            self.conv2 = GCNConv(hidden_channels, hidden_channels, bias=False)
+            self.conv3 = GCNConv(hidden_channels, hidden_channels, bias=False)
+            self.lin   = nn.Linear(hidden_channels, num_classes, bias=False)
 
         def forward(self, x, edge_index, batch):
             x = F.relu(self.conv1(x, edge_index))
@@ -90,8 +93,9 @@ else:
 if TORCH_AVAILABLE:
     class ExtendedQSUP(nn.Module):
         """
-        Extended QSUP Model copied to match the training architecture in ai_model.py
-        to ensure loaded state_dict aligns and predictions behave correctly.
+        Extended QSUP v2 Model copied to match the training architecture in ai_model.py.
+        Key changes: spectral norm on wavefunction nets, LayerNorm before ArcBell,
+        learnable temperature, leaky residual gating, dropout, 2-layer classifier head.
         """
         def __init__(self, input_dim, hidden_dim, num_classes,
                      num_wavefunctions=3, partial_norm=1.5,
@@ -107,9 +111,21 @@ if TORCH_AVAILABLE:
             self.self_modulation_steps = self_modulation_steps
             self.topk = topk
 
-            self.wavefunction_nets = nn.ModuleList([
-                nn.Linear(input_dim, 2 * hidden_dim) for _ in range(num_wavefunctions)
+            # Wavefunction nets with spectral norm
+            self.wavefunction_nets = nn.ModuleList()
+            for _ in range(num_wavefunctions):
+                layer = nn.Linear(input_dim, 2 * hidden_dim)
+                layer = parametrizations.spectral_norm(layer)
+                self.wavefunction_nets.append(layer)
+
+            # LayerNorm applied to each wavefunction net output before ArcBell
+            self.layer_norms = nn.ModuleList([
+                nn.LayerNorm(2 * hidden_dim) for _ in range(num_wavefunctions)
             ])
+
+            # Learnable temperature for interference softmax
+            self.temperature = nn.Parameter(torch.ones(1))
+
             if phase_per_dim:
                 self.phases = nn.Parameter(torch.zeros(num_wavefunctions, hidden_dim))
             else:
@@ -120,12 +136,18 @@ if TORCH_AVAILABLE:
             else:
                 self.gating_net = None
 
-            self.classifier = nn.Linear(hidden_dim, num_classes)
-            nn.init.constant_(self.classifier.bias, 0.0)
-            # Slight bias for AD as in training script
-            with torch.no_grad():
-                if self.classifier.bias.numel() > 1:
-                    self.classifier.bias[1] = 0.75
+            self.dropout = nn.Dropout(0.1)
+
+            # 2-layer classifier head
+            self.classifier = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(hidden_dim, num_classes),
+            )
+            # Initialize final layer bias for AD
+            nn.init.constant_(self.classifier[-1].bias, 0.0)
+            self.classifier[-1].bias.data[1] = 0.75
 
         def forward(self, x):
             batch_size = x.size(0)
@@ -135,7 +157,8 @@ if TORCH_AVAILABLE:
             wave_i_list = []
             for s in range(self.num_wavefunctions):
                 out = self.wavefunction_nets[s](x)
-                out = torch.exp(-out * out)  # ArcBell
+                out = self.layer_norms[s](out)        # LayerNorm before ArcBell
+                out = torch.exp(-out * out)            # ArcBell
                 alpha = out[:, :self.hidden_dim]
                 beta  = out[:, self.hidden_dim:]
                 norm_sq = torch.sum(alpha**2 + beta**2, dim=1, keepdim=True) + eps
@@ -162,7 +185,8 @@ if TORCH_AVAILABLE:
             dot_prod = torch.sum(real_stack * mean_real.unsqueeze(1), dim=2, keepdim=True)
             cosine_sim = dot_prod / (wave_norms * mean_norm)
             cosine_sim = cosine_sim.squeeze(2)
-            interference_weights = F.softmax(cosine_sim, dim=1).unsqueeze(2)
+            # Learnable temperature in interference softmax
+            interference_weights = F.softmax(cosine_sim / self.temperature, dim=1).unsqueeze(2)
 
             sup_real = torch.sum(real_stack * interference_weights, dim=1)
             sup_imag = torch.sum(imag_stack * interference_weights, dim=1)
@@ -171,8 +195,9 @@ if TORCH_AVAILABLE:
                 for _ in range(self.self_modulation_steps):
                     mag = torch.sqrt(sup_real**2 + sup_imag**2 + eps)
                     gate = torch.sigmoid(self.gating_net(mag))
-                    sup_real = sup_real * gate
-                    sup_imag = sup_imag * gate
+                    # Leaky residual connection in gating
+                    sup_real = sup_real * gate + sup_real * 0.1
+                    sup_imag = sup_imag * gate + sup_imag * 0.1
 
             mag_sq = sup_real**2 + sup_imag**2
             if self.topk > 0 and self.topk < self.hidden_dim:
@@ -185,10 +210,33 @@ if TORCH_AVAILABLE:
                 sums = torch.sum(mag_sq, dim=1, keepdim=True) + eps
                 probs = mag_sq / sums
 
+            probs = self.dropout(probs)
             logits = self.classifier(probs)
             return logits
+
+    class TorchMLP(nn.Module):
+        def __init__(self, input_dim, num_classes):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(input_dim, 128),
+                nn.BatchNorm1d(128),
+                nn.GELU(),
+                nn.Dropout(0.2),
+                nn.Linear(128, 64),
+                nn.BatchNorm1d(64),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(64, 32),
+                nn.GELU(),
+                nn.Linear(32, num_classes),
+            )
+
+        def forward(self, x):
+            return self.net(x)
+
 else:
     ExtendedQSUP = None  # type: ignore
+    TorchMLP = None  # type: ignore
 
 
 # -----------------------------
@@ -330,7 +378,6 @@ def compute_energy(feats_vec_30: np.ndarray) -> float:
 # Real-recording backed "simulation" (preferred)
 def _load_labels_ds():
     try:
-        import pandas as pd
         # Prefer repo-relative participants files
         p1 = os.path.join("ds004504", "participants.tsv")
         p2 = os.path.join("ds003800", "participants.tsv")
@@ -360,6 +407,7 @@ def discover_real_recordings():
     """Scan ds004504 and ds003800 for .set files and classify by label."""
     labels = _load_labels_ds()
     pools = {"healthy": [], "alz": []}
+    by_id = {}
     try:
         import glob
         # Collect .set files
@@ -381,9 +429,10 @@ def discover_real_recordings():
                 pools["healthy"].append(f)
             else:
                 pools["alz"].append(f)
+            by_id[subj] = f
     except Exception:
         pass
-    return pools
+    return pools, by_id
 
 
 def _pick_channels(raw, prefer=("F3","F4","P3","O2")):
@@ -423,9 +472,12 @@ def _load_real_signal(path: str, duration_sec: int) -> np.ndarray:
     return data.astype(np.float32)
 
 
-def get_real_demo_signal(condition: str, duration_sec: int) -> np.ndarray | None:
-    pools = discover_real_recordings()
-    candidates = pools["healthy"] if condition == "Healthy" else pools["alz"]
+def get_real_demo_signal(condition: str, duration_sec: int, subj_override: str | None = None) -> np.ndarray | None:
+    pools, by_id = discover_real_recordings()
+    if subj_override and subj_override in by_id:
+        candidates = [by_id[subj_override]]
+    else:
+        candidates = pools["healthy"] if condition == "Healthy" else pools["alz"]
     if not candidates:
         return None
     path = candidates[0]
@@ -436,9 +488,12 @@ def get_real_demo_signal(condition: str, duration_sec: int) -> np.ndarray | None
         return None
 
 
-def get_real_demo_chunk(condition: str, nsamp: int, t_start_sec: float, cache_key: str = "_real_chunk") -> np.ndarray | None:
-    pools = discover_real_recordings()
-    candidates = pools["healthy"] if condition == "Healthy" else pools["alz"]
+def get_real_demo_chunk(condition: str, nsamp: int, t_start_sec: float, cache_key: str = "_real_chunk", subj_override: str | None = None) -> np.ndarray | None:
+    pools, by_id = discover_real_recordings()
+    if subj_override and subj_override in by_id:
+        candidates = [by_id[subj_override]]
+    else:
+        candidates = pools["healthy"] if condition == "Healthy" else pools["alz"]
     if not candidates:
         return None
     path = candidates[0]
@@ -464,17 +519,8 @@ def get_real_demo_chunk(condition: str, nsamp: int, t_start_sec: float, cache_ke
         chunk = np.concatenate([part1, part2], axis=1)
     st.session_state[key+"_idx"] = (idx + nsamp) % buf.shape[1]
     return chunk
-def generate_demo_chunk(condition: str, nsamp: int, t_start_sec: float = 0.0) -> np.ndarray:
-    """Generate a 4xnsamp synthetic EEG chunk.
-    condition: 'Healthy' or 'Alzheimer\'s'
-    """
-    # Prefer real recordings; fallback to synthetic if unavailable
-    try:
-        ch = get_real_demo_chunk(condition, nsamp, t_start_sec)
-        if ch is not None:
-            return ch
-    except Exception:
-        pass
+def generate_demo_chunk(condition: str, nsamp: int, t_start_sec: float = 0.0, subj_override: str | None = None) -> np.ndarray:
+    """Generate a 4xnsamp synthetic EEG chunk (fake simulation)."""
     t = np.arange(nsamp) / SAMPLING_RATE + t_start_sec
     # Frequency bands representative tones
     alpha_f = [10.0, 9.0, 10.5, 8.5]
@@ -510,13 +556,10 @@ def generate_demo_chunk(condition: str, nsamp: int, t_start_sec: float = 0.0) ->
     return np.stack(out, axis=0)
 
 
-def generate_demo_signal(condition: str, duration_sec: int) -> np.ndarray:
-    # Prefer a real recording slice; fallback to synthetic if needed
-    real = get_real_demo_signal(condition, duration_sec)
-    if real is not None:
-        return real
+def generate_demo_signal(condition: str, duration_sec: int, subj_override: str | None = None) -> np.ndarray:
+    # Purely synthetic demo (fake simulation)
     nsamp = duration_sec * SAMPLING_RATE
-    chunks = [generate_demo_chunk(condition, SAMPLING_RATE, t_start_sec=float(s)) for s in range(duration_sec)]
+    chunks = [generate_demo_chunk(condition, SAMPLING_RATE, t_start_sec=float(s), subj_override=subj_override) for s in range(duration_sec)]
     full = np.concatenate(chunks, axis=1)
     return full.T
 
@@ -621,7 +664,17 @@ def load_models():
     gcn_model = None
     qsup_model = None
 
-    if joblib is not None and os.path.exists(MLP_MODEL_PATH):
+    # Try TorchMLP (.pth) first, fall back to sklearn (.pkl)
+    if TORCH_AVAILABLE and os.path.exists(MLP_PTH_MODEL_PATH):
+        try:
+            model = TorchMLP(input_dim=62, num_classes=2)
+            sd = torch.load(MLP_PTH_MODEL_PATH, map_location="cpu", weights_only=True)
+            model.load_state_dict(sd, strict=True)
+            model.eval()
+            mlp_model = model
+        except Exception as e:
+            st.warning(f"Failed to load TorchMLP from .pth: {e}")
+    if mlp_model is None and joblib is not None and os.path.exists(MLP_MODEL_PATH):
         try:
             mlp_model = joblib.load(MLP_MODEL_PATH)
         except Exception as e:
@@ -644,6 +697,8 @@ def load_models():
             st.warning(f"Failed to load GCN model: {e}")
 
     if TORCH_AVAILABLE and os.path.exists(QSUP_MODEL_PATH):
+        # Try safe weights-only load first (PyTorch >=2.6 defaults to weights_only=True)
+        qsup_err1 = qsup_err2 = None
         try:
             model = ExtendedQSUP(
                 input_dim=62,
@@ -655,12 +710,43 @@ def load_models():
                 self_modulation_steps=2,
                 topk=8,
             )
-            sd = torch.load(QSUP_MODEL_PATH, map_location="cpu")
+            sd = torch.load(QSUP_MODEL_PATH, map_location="cpu", weights_only=True)
             model.load_state_dict(sd, strict=True)
             model.eval()
             qsup_model = model
         except Exception as e:
-            st.warning(f"Failed to load QSUP model: {e}")
+            qsup_err1 = e
+            # Optional unsafe legacy load (pickle). Enable via env ALLOW_UNPICKLE=1 or sidebar toggle.
+            allow = os.environ.get("ALLOW_UNPICKLE", "0") == "1" or st.session_state.get("allow_legacy_pickle", False)
+            if allow:
+                try:
+                    obj = torch.load(QSUP_MODEL_PATH, map_location="cpu", weights_only=False)
+                    # Accept state_dict or full module
+                    if isinstance(obj, dict):
+                        model = ExtendedQSUP(
+                            input_dim=62,
+                            hidden_dim=32,
+                            num_classes=2,
+                            num_wavefunctions=6,
+                            partial_norm=1.5,
+                            phase_per_dim=True,
+                            self_modulation_steps=2,
+                            topk=8,
+                        )
+                        model.load_state_dict(obj, strict=False)
+                        model.eval()
+                        qsup_model = model
+                    elif isinstance(obj, nn.Module):
+                        qsup_model = obj
+                        qsup_model.eval()
+                except Exception as e2:
+                    qsup_err2 = e2
+            # Surface a concise message if still not loaded
+            if qsup_model is None:
+                msg = f"Failed to load QSUP model safely: {qsup_err1}"
+                if qsup_err2 is not None:
+                    msg += f"; unsafe load also failed: {qsup_err2}"
+                st.warning(msg)
 
     return mlp_model, pca_model, gcn_model, qsup_model
 
@@ -868,6 +954,8 @@ with st.sidebar:
         key="theme",
         on_change=lambda: st.query_params.__setitem__("theme", st.session_state.get("theme","dark"))
     )
+    # Optional: allow unsafe legacy pickle loads for QSUP
+    st.checkbox("Load legacy QSUP (unsafe)", key="allow_legacy_pickle", help="Allows loading pickled model objects (weights_only=False) — only enable for trusted files.")
     st.markdown("---")
     st.caption("Models loaded from `trained_models/`")
 
@@ -914,19 +1002,16 @@ if page == "Home":
     # App version/simple tag
     with k4:
         st.metric("AlzDetect", "v1")
-    c1, c2, c3 = st.columns(3)
+    c1, c3 = st.columns(2)
     with c1:
         st.markdown("<div class='alz-card'><h4>Try Inference</h4><p>Upload EEG (CSV/NPY) and get predictions.</p></div>", unsafe_allow_html=True)
         st.button("Go to Inference", key="cta_inf", type="primary", use_container_width=True, on_click=_nav_to, args=("Inference",))
-    with c2:
-        st.markdown("<div class='alz-card'><h4>Live Demo</h4><p>Stream synthetic EEG and watch live predictions.</p></div>", unsafe_allow_html=True)
-        st.button("Start Live Demo", key="cta_live", type="primary", use_container_width=True, on_click=_nav_to, args=("Inference","Live demo"))
     with c3:
         st.markdown("<div class='alz-card'><h4>See Plots</h4><p>Explore training ROC and loss figures.</p></div>", unsafe_allow_html=True)
         st.button("Open Plots", key="cta_plots", use_container_width=True, on_click=_nav_to, args=("Plots",))
 
 if page == "Inference":
-    st.subheader("Upload 4‑channel EEG, use demo, or run live mode")
+    st.subheader("Upload 4‑channel EEG or use demo signal")
     cols = st.columns([2, 1])
 
     with cols[0]:
@@ -938,7 +1023,6 @@ if page == "Inference":
             if up is not None:
                 if up.name.endswith(".csv"):
                     try:
-                        import pandas as pd
                         df = pd.read_csv(up)
                         eeg_array = df.values.astype(np.float32)
                     except Exception:
@@ -952,12 +1036,6 @@ if page == "Inference":
         elif mode == "Demo signal":
             dur = st.slider("Demo duration (seconds)", min_value=5, max_value=600, value=60, step=5)
             cond = st.radio("Simulated condition", ["Healthy", "Alzheimer's"], horizontal=True)
-            # Show which subject is used (for debugging/traceability)
-            pools = discover_real_recordings()
-            cand = (pools["healthy"] if cond == "Healthy" else pools["alz"]) or []
-            if cand:
-                subj = os.path.basename(cand[0]).split('_')[0]
-                st.caption(f"Simulated source: {subj}")
             eeg_array = generate_demo_signal(cond, dur)
         elif mode == "Live demo":
             # Initialize / controls
@@ -968,11 +1046,15 @@ if page == "Inference":
                 st.session_state.conf_hist = []
                 st.session_state.last_tick = 0.0
             cond = st.radio("Simulated condition", ["Healthy", "Alzheimer's"], horizontal=True)
-            pools = discover_real_recordings()
-            cand = (pools["healthy"] if cond == "Healthy" else pools["alz"]) or []
-            if cand:
-                subj = os.path.basename(cand[0]).split('_')[0]
-                st.caption(f"Simulated source: {subj}")
+            subj_override = st.text_input("Subject ID (optional, e.g., sub-002)", value=("sub-002" if cond=="Alzheimer's" else ""), key="live_subj")
+            pools, by_id = discover_real_recordings()
+            if subj_override and subj_override in by_id:
+                st.caption(f"Simulated source: {subj_override}")
+            else:
+                cand = (pools["healthy"] if cond == "Healthy" else pools["alz"]) or []
+                if cand:
+                    subj = os.path.basename(cand[0]).split('_')[0]
+                    st.caption(f"Simulated source: {subj}")
             dur_total = st.slider("Total live duration (seconds)", 10, 900, 120, step=10)
             view_secs = st.slider("Chart window (seconds)", 5, 60, 20, step=5)
             plot_rate = st.slider("Plot rate (Hz)", 16, 128, 64, step=16)
@@ -997,7 +1079,7 @@ if page == "Inference":
                     for _ in range(dur_total):
                         nsamp = SAMPLING_RATE
                         t0_sec = (st.session_state.t_idx / SAMPLING_RATE)
-                        chunk = generate_demo_chunk(cond, nsamp, t_start_sec=t0_sec)
+                        chunk = generate_demo_chunk(cond, nsamp, t_start_sec=t0_sec, subj_override=subj_override if subj_override else None)
                         st.session_state.live_buf = np.concatenate((st.session_state.live_buf, chunk), axis=1)
                         st.session_state.t_idx += nsamp
 
@@ -1006,7 +1088,6 @@ if page == "Inference":
                         if seg.size > 0:
                             step = max(1, SAMPLING_RATE // plot_rate)
                             seg_ds = seg[:, ::step]
-                            import pandas as pd
                             df = pd.DataFrame(seg_ds.T, columns=["F3", "F4", "P3", "O2"])
                             chart_ph.line_chart(df, height=250)
 
@@ -1035,9 +1116,9 @@ if page == "Inference":
                         st.session_state.ccv_hist.append(full_vec.flatten())
                         if len(st.session_state.ccv_hist) > 500:
                             st.session_state.ccv_hist = st.session_state.ccv_hist[-500:]
-                            pred_text = ""
-                            mlp_conf_val = None
-                            qsup_conf_val = None
+                        pred_text = ""
+                        mlp_conf_val = None
+                        qsup_conf_val = None
                         if mlp_model is not None:
                             try:
                                 x_in = full_vec
@@ -1045,10 +1126,10 @@ if page == "Inference":
                                     x_in = mlp_scaler.transform(x_in)
                                 else:
                                     x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
-                                proba = mlp_model.predict_proba(x_in)[0]
+                                proba = mlp_predict_proba(mlp_model, x_in)
                                 mlp_conf_val = float(proba[1])
                                 pred = int(mlp_conf_val >= 0.5)
-                                pred_text += f"MLP: {pred} (conf {mlp_conf_val:.2f})  "
+                                pred_text += f"MLP: {pred} (AD {mlp_conf_val*100:.0f}%)  "
                             except Exception:
                                 pass
                         if TORCH_AVAILABLE and qsup_model is not None:
@@ -1063,26 +1144,26 @@ if page == "Inference":
                                     p = torch.softmax(logits, dim=1).cpu().numpy()[0]
                                     qsup_conf_val = float(p[1])
                                     pred = int(qsup_conf_val >= 0.5)
-                                    pred_text += f"QSUP: {pred} (conf {qsup_conf_val:.2f})  "
+                                    pred_text += f"QSUP: {pred} (AD {qsup_conf_val*100:.0f}%)  "
                             except Exception:
                                 pass
-                            pred_text += f"Energy: {compute_energy(gf_30[0]):.1f}"
-                            pred_ph.info(pred_text)
-                            t_sec = st.session_state.t_idx / SAMPLING_RATE
-                            st.session_state.conf_hist.append({
-                                "t": t_sec,
-                                "MLP": mlp_conf_val if mlp_conf_val is not None else np.nan,
-                                "QSUP": qsup_conf_val if qsup_conf_val is not None else np.nan,
-                            })
-                            if len(st.session_state.conf_hist) > 600:
-                                st.session_state.conf_hist = st.session_state.conf_hist[-600:]
-                            try:
-                                import pandas as pd
-                                dfh = pd.DataFrame(st.session_state.conf_hist).set_index("t")
-                                conf_chart_ph.line_chart(dfh, height=200)
-                            except Exception:
-                                pass
-                            last_update_ph.caption(f"Last prediction at t={t_sec:.1f}s")
+                        pred_text += f"Energy: {compute_energy(gf_30[0]):.1f}"
+                        pred_ph.info(pred_text)
+                        t_sec = st.session_state.t_idx / SAMPLING_RATE
+                        st.session_state.conf_hist.append({
+                            "t": t_sec,
+                            "MLP": mlp_conf_val if mlp_conf_val is not None else np.nan,
+                            "QSUP": qsup_conf_val if qsup_conf_val is not None else np.nan,
+                        })
+                        if len(st.session_state.conf_hist) > 600:
+                            st.session_state.conf_hist = st.session_state.conf_hist[-600:]
+                        try:
+                            dfh = pd.DataFrame(st.session_state.conf_hist).set_index("t")
+                            conf_chart_ph.line_chart(dfh, height=200)
+                            st.caption("Live MLP/QSUP values are P(AD) over time.")
+                        except Exception:
+                            pass
+                        last_update_ph.caption(f"Last prediction at t={t_sec:.1f}s")
 
                         time.sleep(1.0)
                 except Exception as e:
@@ -1112,7 +1193,6 @@ if page == "Inference":
             if start and up is not None:
                 # load file into session
                 if up.name.endswith(".csv"):
-                    import pandas as pd
                     df = pd.read_csv(up)
                     arr = df.values.astype(np.float32)
                 else:
@@ -1146,7 +1226,6 @@ if page == "Inference":
                 if seg.size > 0:
                     step = max(1, SAMPLING_RATE // plot_rate)
                     seg_ds = seg[:, ::step]
-                    import pandas as pd
                     dfc = pd.DataFrame(seg_ds.T, columns=["F3", "F4", "P3", "O2"])  # example labels
                     chart_ph.line_chart(dfc, height=250)
                 if st.session_state.play_buf.shape[1] >= WINDOW_SAMPLES:
@@ -1182,10 +1261,10 @@ if page == "Inference":
                                 x_in = mlp_scaler.transform(x_in)
                             else:
                                 x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
-                            proba = mlp_model.predict_proba(x_in)[0]
+                            proba = mlp_predict_proba(mlp_model, x_in)
                             mlp_conf_val = float(proba[1])
                             pred = int(mlp_conf_val >= 0.5)
-                            pred_text += f"MLP: {pred} (conf {mlp_conf_val:.2f})  "
+                            pred_text += f"MLP: {pred} (AD {mlp_conf_val*100:.0f}%)  "
                         except Exception:
                             pass
                     if TORCH_AVAILABLE and qsup_model is not None:
@@ -1200,7 +1279,7 @@ if page == "Inference":
                                 p = torch.softmax(logits, dim=1).cpu().numpy()[0]
                                 qsup_conf_val = float(p[1])
                                 pred = int(qsup_conf_val >= 0.5)
-                                pred_text += f"QSUP: {pred} (conf {qsup_conf_val:.2f})  "
+                                pred_text += f"QSUP: {pred} (AD {qsup_conf_val*100:.0f}%)  "
                         except Exception:
                             pass
                     pred_text += f"Energy: {compute_energy(gf_30[0]):.1f}"
@@ -1214,9 +1293,9 @@ if page == "Inference":
                     if len(st.session_state.play_conf_hist) > 600:
                         st.session_state.play_conf_hist = st.session_state.play_conf_hist[-600:]
                     try:
-                        import pandas as pd
                         dfh = pd.DataFrame(st.session_state.play_conf_hist).set_index("t")
                         conf_chart_ph.line_chart(dfh, height=200)
+                        st.caption("Live MLP/QSUP values are P(AD) over time.")
                     except Exception:
                         pass
                     last_update_ph.caption(f"Last prediction at t={t_sec:.1f}s")
@@ -1296,7 +1375,7 @@ if page == "Inference":
                         x_in = mlp_scaler.transform(x_in)
                     else:
                         x_in = adaptive_scale(x_in, st.session_state.ccv_hist)
-                    proba = mlp_model.predict_proba(x_in)[0]
+                    proba = mlp_predict_proba(mlp_model, x_in)
                     conf_mlp = float(proba[1])
                     pred_mlp = int(conf_mlp >= 0.5)
                 except Exception as e:
@@ -1322,17 +1401,16 @@ if page == "Inference":
             st.success("Prediction complete")
             met_cols = st.columns(3)
             with met_cols[0]:
-                st.metric("MLP (1=AD)", value=str(pred_mlp) if pred_mlp is not None else "-",
-                          delta=f"conf {conf_mlp:.2f}" if conf_mlp is not None else "")
+                st.metric("MLP (AD prob)", value=(f"{conf_mlp*100:.0f}%" if conf_mlp is not None else "-"),
+                          delta=(f"pred {pred_mlp}" if pred_mlp is not None else ""))
             with met_cols[1]:
-                st.metric("QSUP (1=AD)", value=str(pred_qsup) if pred_qsup is not None else "-",
-                          delta=f"conf {conf_qsup:.2f}" if conf_qsup is not None else "")
+                st.metric("QSUP (AD prob)", value=(f"{conf_qsup*100:.0f}%" if conf_qsup is not None else "-"),
+                          delta=(f"pred {pred_qsup}" if pred_qsup is not None else ""))
             with met_cols[2]:
                 st.metric("Energy", value=f"{compute_energy(gf_30[0]):.1f}")
 
             with st.expander("Feature values (30 agg) and CCV (62)"):
                 try:
-                    import pandas as pd
                     names30 = make_feature_names_30()
                     df30 = pd.DataFrame([gf_30[0]], columns=names30)
                     st.dataframe(df30, use_container_width=True)
@@ -1340,6 +1418,31 @@ if page == "Inference":
                     st.write(gf_30.tolist())
                 st.caption("CCV (62 dims): 30 aggregator + 32 GCN (zeros if GCN unavailable)")
                 st.bar_chart(full_vec.flatten(), height=160)
+
+            # GCN diagnostics
+            with st.expander("GCN diagnostics"):
+                st.write({
+                    "TORCH_AVAILABLE": TORCH_AVAILABLE,
+                    "PYG_AVAILABLE": PYG_AVAILABLE,
+                    "GCN model loaded": bool(gcn_model),
+                })
+                try:
+                    if TORCH_AVAILABLE and PYG_AVAILABLE and gcn_model is not None:
+                        # recompute node feats on current 20s buffer
+                        feats = channelwise_9feats(chunk if 'chunk' in locals() else ensure_4ch_20s(eeg_array.T if eeg_array.shape[1]==4 else eeg_array))
+                        A = adjacency_4ch()
+                        edge_idx = np.array(np.nonzero(A))
+                        edge_idx = torch.tensor(edge_idx, dtype=torch.long)
+                        x_tensor = torch.tensor(feats, dtype=torch.float)
+                        batch = torch.zeros(x_tensor.shape[0], dtype=torch.long)
+                        with torch.no_grad():
+                            emb = gcn_model.embed(x_tensor, edge_index=edge_idx, batch=batch).cpu().numpy().reshape(-1)
+                        st.write({"embedding_norm": float(np.linalg.norm(emb)), "nonzero": int((np.abs(emb)>1e-9).sum())})
+                        st.bar_chart(emb[:16], height=120)
+                    else:
+                        st.caption("GCN unavailable. Install torch-geometric and provide trained_models/gcn_model.pth")
+                except Exception as e:
+                    st.warning(f"GCN check failed: {e}")
 
             # Model representations
             rep_cols = st.columns(2)

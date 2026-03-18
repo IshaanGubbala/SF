@@ -17,6 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.utils.parametrizations as parametrizations
 import joblib
 from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv, global_mean_pool
@@ -78,10 +79,10 @@ class EnergyLandscape(BaseModel):
 class GCNNet(nn.Module):
     def __init__(self, in_channels, hidden_channels, num_classes):
         super().__init__()
-        self.conv1 = GCNConv(in_channels, hidden_channels)
-        self.conv2 = GCNConv(hidden_channels, hidden_channels)
-        self.conv3 = GCNConv(hidden_channels, hidden_channels)
-        self.lin   = nn.Linear(hidden_channels, num_classes)
+        self.conv1 = GCNConv(in_channels, hidden_channels, bias=False)
+        self.conv2 = GCNConv(hidden_channels, hidden_channels, bias=False)
+        self.conv3 = GCNConv(hidden_channels, hidden_channels, bias=False)
+        self.lin   = nn.Linear(hidden_channels, num_classes, bias=False)
     def forward(self, x, edge_index, batch):
         x = F.relu(self.conv1(x, edge_index))
         x = F.relu(self.conv2(x, edge_index))
@@ -91,13 +92,126 @@ class GCNNet(nn.Module):
         return self.forward(x, edge_index, batch)
 
 class ExtendedQSUP(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_classes):
+    def __init__(self, input_dim, hidden_dim, num_classes,
+                 num_wavefunctions=3, partial_norm=1.5,
+                 phase_per_dim=False, self_modulation_steps=2,
+                 topk=8):
         super().__init__()
-        self.lin1 = nn.Linear(input_dim, hidden_dim)
-        self.lin2 = nn.Linear(hidden_dim, num_classes)
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.num_classes = num_classes
+        self.num_wavefunctions = num_wavefunctions
+        self.partial_norm = partial_norm
+        self.phase_per_dim = phase_per_dim
+        self.self_modulation_steps = self_modulation_steps
+        self.topk = topk
+
+        self.wavefunction_nets = nn.ModuleList([
+            parametrizations.spectral_norm(nn.Linear(input_dim, 2 * hidden_dim)) for _ in range(num_wavefunctions)
+        ])
+        self.layer_norms = nn.ModuleList([nn.LayerNorm(2 * hidden_dim) for _ in range(num_wavefunctions)])
+        self.temperature = nn.Parameter(torch.ones(1))
+        self.dropout = nn.Dropout(0.1)
+        if phase_per_dim:
+            self.phases = nn.Parameter(torch.zeros(num_wavefunctions, hidden_dim))
+        else:
+            self.phases = nn.Parameter(torch.zeros(num_wavefunctions, 1))
+
+        if self_modulation_steps > 0:
+            self.gating_net = nn.Linear(hidden_dim, hidden_dim)
+        else:
+            self.gating_net = None
+
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, num_classes),
+        )
+        nn.init.constant_(self.classifier[-1].bias, 0.0)
+        self.classifier[-1].bias.data[1] = 0.75  # Slight bias for AD
+
     def forward(self, x):
-        x = torch.relu(self.lin1(x))
-        return self.lin2(x)
+        batch_size = x.size(0)
+        eps = 1e-8
+
+        wave_r_list = []
+        wave_i_list = []
+        for s in range(self.num_wavefunctions):
+            out = self.wavefunction_nets[s](x)    # shape: (batch, 2*hidden_dim)
+            out = self.layer_norms[s](out)
+            out = torch.exp(-out * out)           # ArcBell
+            alpha = out[:, :self.hidden_dim]
+            beta  = out[:, self.hidden_dim:]
+            norm_sq = torch.sum(alpha**2 + beta**2, dim=1, keepdim=True) + eps
+            factor = torch.sqrt((self.partial_norm**2) / norm_sq)
+            alpha = alpha * factor
+            beta  = beta * factor
+
+            if self.phase_per_dim:
+                phase = self.phases[s].unsqueeze(0)
+            else:
+                phase = self.phases[s]
+            wave_r = alpha * torch.cos(phase) - beta * torch.sin(phase)
+            wave_i = alpha * torch.sin(phase) + beta * torch.cos(phase)
+            wave_r_list.append(wave_r)
+            wave_i_list.append(wave_i)
+
+        real_stack = torch.stack(wave_r_list, dim=1)   # (batch, num_wavefunctions, hidden_dim)
+        imag_stack = torch.stack(wave_i_list, dim=1)   # (batch, num_wavefunctions, hidden_dim)
+
+        mean_real = torch.mean(real_stack, dim=1)      # (batch, hidden_dim)
+        mean_norm = torch.sqrt(torch.sum(mean_real**2, dim=1, keepdim=True)) + eps
+        mean_norm = mean_norm.unsqueeze(1)
+        wave_norms = torch.sqrt(torch.sum(real_stack**2, dim=2, keepdim=True)) + eps
+        dot_prod = torch.sum(real_stack * mean_real.unsqueeze(1), dim=2, keepdim=True)
+        cosine_sim = dot_prod / (wave_norms * mean_norm)
+        cosine_sim = cosine_sim.squeeze(2)
+        interference_weights = F.softmax(cosine_sim / self.temperature, dim=1).unsqueeze(2)
+
+        sup_real = torch.sum(real_stack * interference_weights, dim=1)
+        sup_imag = torch.sum(imag_stack * interference_weights, dim=1)
+
+        if self.self_modulation_steps > 0 and self.gating_net is not None:
+            for _ in range(self.self_modulation_steps):
+                mag = torch.sqrt(sup_real**2 + sup_imag**2 + eps)
+                gate = torch.sigmoid(self.gating_net(mag))
+                sup_real = sup_real * gate + sup_real * 0.1
+                sup_imag = sup_imag * gate + sup_imag * 0.1
+
+        mag_sq = sup_real**2 + sup_imag**2
+        if self.topk > 0 and self.topk < self.hidden_dim:
+            vals, inds = torch.topk(mag_sq, self.topk, dim=1)
+            mask = torch.zeros_like(mag_sq).scatter_(1, inds, 1.0)
+            masked = mag_sq * mask
+            sums = torch.sum(masked, dim=1, keepdim=True) + eps
+            probs = masked / sums
+        else:
+            sums = torch.sum(mag_sq, dim=1, keepdim=True) + eps
+            probs = mag_sq / sums
+
+        probs = self.dropout(probs)
+        logits = self.classifier(probs)
+        return logits
+
+class TorchMLP(nn.Module):
+    def __init__(self, input_dim, num_classes):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(64, 32),
+            nn.GELU(),
+            nn.Linear(32, num_classes),
+        )
+    def forward(self, x):
+        return self.net(x)
 
 # FastAPI setup
 app = FastAPI()
@@ -112,24 +226,41 @@ app.add_middleware(
 try:
     gcn_model = GCNNet(in_channels=9, hidden_channels=32, num_classes=2)
     sd_gcn = torch.load(GCN_MODEL_PATH, map_location="cpu")
-    gcn_model.load_state_dict(sd_gcn, strict=False)
+    gcn_model.load_state_dict(sd_gcn, strict=True)
     gcn_model.eval()
     print("[INFO] GCN model loaded.")
 except Exception as e:
     print("[ERROR] GCN model:", e)
     gcn_model = None
 
+mlp_model = None
+mlp_is_torch = False
+MLP_PTH_PATH = os.path.join(MODELS_DIR, "mlp_model.pth")
 try:
-    mlp_model = joblib.load(MLP_MODEL_PATH)
-    print("[INFO] MLP model loaded.")
+    torch_mlp = TorchMLP(input_dim=62, num_classes=2)
+    sd_mlp = torch.load(MLP_PTH_PATH, map_location="cpu", weights_only=False)
+    torch_mlp.load_state_dict(sd_mlp, strict=True)
+    torch_mlp.eval()
+    mlp_model = torch_mlp
+    mlp_is_torch = True
+    print("[INFO] TorchMLP model loaded from .pth")
 except Exception as e:
-    print("[ERROR] MLP model:", e)
-    mlp_model = None
+    print(f"[WARN] TorchMLP load failed ({e}), trying sklearn fallback...")
+    try:
+        mlp_model = joblib.load(MLP_MODEL_PATH)
+        print("[INFO] sklearn MLP model loaded from .pkl")
+    except Exception as e2:
+        print("[ERROR] MLP model:", e2)
+        mlp_model = None
 
 try:
-    qsup_model = ExtendedQSUP(input_dim=62, hidden_dim=32, num_classes=2)
+    qsup_model = ExtendedQSUP(
+        input_dim=62, hidden_dim=32, num_classes=2,
+        num_wavefunctions=6, partial_norm=1.5,
+        phase_per_dim=True, self_modulation_steps=2, topk=8
+    )
     sd_qsup = torch.load(QSUP_MODEL_PATH, map_location="cpu", weights_only=False)
-    qsup_model.load_state_dict(sd_qsup, strict=False)
+    qsup_model.load_state_dict(sd_qsup, strict=True)
     qsup_model.eval()
     print("[INFO] QSUP model loaded.")
 except Exception as e:
@@ -256,13 +387,6 @@ def compute_stats(feats: Dict[str, float]) -> Dict[str, Dict[str, float]]:
         out[k] = {"mean": v, "std": 0.0}
     return out
 
-# WebSocket pydantic models (reuse EEGSample and EEGData above)
-class EEGSample(BaseModel):
-    channels: List[float]
-
-class EEGData(BaseModel):
-    data: List[EEGSample]
-
 # Connection Manager
 class ConnectionManager:
     def __init__(self):
@@ -314,10 +438,18 @@ class ConnectionManager:
             mlp_pred, mlp_conf = 0, 0.0
             if mlp_model:
                 try:
-                    proba = mlp_model.predict_proba(full_vec)[0]
-                    mlp_conf = float(proba[1])
-                    mlp_pred = int(mlp_conf >= 0.5)
-                except:
+                    if mlp_is_torch:
+                        with torch.no_grad():
+                            t_in = torch.tensor(full_vec, dtype=torch.float)
+                            logits = mlp_model(t_in)
+                            p_m = torch.softmax(logits, dim=1)
+                            mlp_conf = float(p_m[0, 1])
+                            mlp_pred = int(mlp_conf >= 0.5)
+                    else:
+                        proba = mlp_model.predict_proba(full_vec)[0]
+                        mlp_conf = float(proba[1])
+                        mlp_pred = int(mlp_conf >= 0.5)
+                except Exception:
                     pass
             qsup_pred, qsup_conf = 0, 0.0
             if qsup_model:
@@ -332,7 +464,7 @@ class ConnectionManager:
                 try:
                     pc = pca_model.transform(full_vec)[0]
                     pc1, pc2 = float(pc[0]), float(pc[1])
-                except:
+                except Exception:
                     pass
             feats_dict = {f"agg{i}": float(gf_30[0, i]) for i in range(30)}
             e_val = compute_energy(feats_dict)
@@ -355,9 +487,6 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-from fastapi import WebSocket
-from fastapi import WebSocketDisconnect
-
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
@@ -377,5 +506,9 @@ async def websocket_endpoint(ws: WebSocket):
         await manager.disconnect(ws)
         print("[ERROR]", e)
 
-if __name__=="__main__":
+def run_server():
+    """Entry point for alzdetect-server CLI."""
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+
+if __name__ == "__main__":
+    run_server()

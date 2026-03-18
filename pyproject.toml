@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alzdetect"
+version = "2.0.0"
+description = "EEG-based Alzheimer's detection with MLP, QSUP, and GCN models"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Ishaan Gubbala"},
+    {name = "Ayaan Khan"},
+]
+keywords = ["EEG", "Alzheimer", "QSUP", "GCN", "neuroscience", "deep-learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "scikit-learn>=1.3",
+    "joblib>=1.3",
+    "mne>=1.5",
+    "imbalanced-learn>=0.11",
+    "matplotlib>=3.7",
+    "tqdm>=4.65",
+    "numba>=0.57",
+]
+
+[project.optional-dependencies]
+torch = [
+    "torch>=2.0",
+    "torch-geometric>=2.3",
+    "tensorboard>=2.14",
+]
+app = [
+    "streamlit>=1.30",
+]
+server = [
+    "fastapi>=0.100",
+    "uvicorn>=0.23",
+    "websockets>=11.0",
+    "pydantic>=2.0",
+]
+hardware = [
+    "brainflow>=5.10",
+]
+all = [
+    "alzdetect[torch,app,server,hardware]",
+]
+
+[project.scripts]
+alzdetect-train = "ai_model:main"
+alzdetect-preprocess = "process_server:main"
+alzdetect-server = "server:run_server"
+alzdetect-app = "alzdetect.cli:run_app"
+
+[tool.setuptools]
+py-modules = ["ai_model", "process_server", "server", "streamlit_app", "board_client"]
+
+[tool.setuptools.package-data]
+"*" = ["trained_models/*.pkl", "trained_models/*.pth", "trained_models/*.joblib"]

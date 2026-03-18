@@ -1,0 +1,28 @@
+# Data directories (large EEG datasets)
+ds003800/
+ds004504/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and tensorboard
+logs/
+
+# Temporary files
+*.tmp
+*.bak

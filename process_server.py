@@ -18,11 +18,8 @@ import os, glob, json, warnings, time
 import numpy as np
 import pandas as pd
 import mne
-import networkx as nx
 from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
-
-from imblearn.over_sampling import SMOTE
 from numba import njit
 
 # Suppress warnings and logs
@@ -33,10 +30,11 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 #############################################
 # CONFIGURATION (Update paths as needed)
 #############################################
-DS004504_PATH = "/Users/ishaangubbala/Documents/SF/ds004504/derivatives"
-DS003800_PATH = "/Users/ishaangubbala/Documents/SF/ds003800/"
-PARTICIPANTS_FILE_DS004504 = "/Users/ishaangubbala/Documents/SF/ds004504/participants.tsv"
-PARTICIPANTS_FILE_DS003800 = "/Users/ishaangubbala/Documents/SF/ds003800/participants.tsv"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DS004504_PATH = os.path.join(BASE_DIR, "ds004504", "derivatives")
+DS003800_PATH = os.path.join(BASE_DIR, "ds003800")
+PARTICIPANTS_FILE_DS004504 = os.path.join(BASE_DIR, "ds004504", "participants.tsv")
+PARTICIPANTS_FILE_DS003800 = os.path.join(BASE_DIR, "ds003800", "participants.tsv")
 SAMPLING_RATE = 256  # Hz
 
 FREQUENCY_BANDS = {
