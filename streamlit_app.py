@@ -702,13 +702,13 @@ def load_models():
         try:
             model = ExtendedQSUP(
                 input_dim=62,
-                hidden_dim=32,
+                hidden_dim=48,
                 num_classes=2,
-                num_wavefunctions=6,
+                num_wavefunctions=8,
                 partial_norm=1.5,
                 phase_per_dim=True,
-                self_modulation_steps=2,
-                topk=8,
+                self_modulation_steps=3,
+                topk=12,
             )
             sd = torch.load(QSUP_MODEL_PATH, map_location="cpu", weights_only=True)
             model.load_state_dict(sd, strict=True)
@@ -725,13 +725,13 @@ def load_models():
                     if isinstance(obj, dict):
                         model = ExtendedQSUP(
                             input_dim=62,
-                            hidden_dim=32,
+                            hidden_dim=48,
                             num_classes=2,
-                            num_wavefunctions=6,
+                            num_wavefunctions=8,
                             partial_norm=1.5,
                             phase_per_dim=True,
-                            self_modulation_steps=2,
-                            topk=8,
+                            self_modulation_steps=3,
+                            topk=12,
                         )
                         model.load_state_dict(obj, strict=False)
                         model.eval()

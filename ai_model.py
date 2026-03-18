@@ -48,7 +48,7 @@ from sklearn.metrics import (
     confusion_matrix, classification_report, log_loss
 )
 from sklearn.manifold import TSNE
-from imblearn.over_sampling import SMOTE
+from imblearn.over_sampling import SMOTE, ADASYN
 
 import torch
 import torch.nn as nn
@@ -576,11 +576,11 @@ def train_extended_qsup_tb(
         topk=topk
     ).to(device)
 
-    # Class-weighted loss with label smoothing
+    # Class-weighted loss with mild label smoothing
     class_weights = compute_class_weights(y_train, device)
-    loss_fn = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
+    loss_fn = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.02)
 
-    optimizer = TorchAdam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = TorchAdam(model.parameters(), lr=5e-4, weight_decay=5e-4)
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
     train_loss_history = []
@@ -630,12 +630,12 @@ def train_extended_qsup_tb(
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    # --- Stochastic Weight Averaging (SWA) for 20 more epochs ---
-    print("  [QSUP] Starting SWA phase (20 epochs)...")
+    # --- Stochastic Weight Averaging (SWA) for 30 more epochs ---
+    print("  [QSUP] Starting SWA phase (30 epochs)...")
     swa_model = AveragedModel(model)
-    swa_scheduler = SWALR(optimizer, swa_lr=1e-4)
+    swa_scheduler = SWALR(optimizer, swa_lr=5e-5)
 
-    for swa_epoch in range(1, 21):
+    for swa_epoch in range(1, 31):
         model.train()
         optimizer.zero_grad()
 
@@ -664,7 +664,8 @@ def train_extended_qsup_tb(
 # 6) CROSS-VALIDATION FOR MLP (PyTorch)
 #############################################
 def cv_classification_MLP(CCV, y):
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
+    N_FOLDS = 5
+    skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=5)
     all_y_true = []
     all_y_pred = []
     all_y_proba = []
@@ -793,7 +794,7 @@ def cv_classification_MLP(CCV, y):
 #############################################
 def cv_classification_ExtendedQSUP(CCV, y):
     """
-    Trains ExtendedQSUP v2 with 5-fold cross validation.
+    Trains ExtendedQSUP v2 with 5-fold cross validation (5-model ensemble per fold).
     Saves the best fold's model (highest val AUC) as "qsup_model.pth".
     """
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=5)
@@ -811,9 +812,9 @@ def cv_classification_ExtendedQSUP(CCV, y):
     best_qsup_model = None
     # Store model config for saving
     qsup_config = dict(
-        input_dim=input_dim, hidden_dim=32, num_classes=n_classes,
-        num_wavefunctions=6, partial_norm=1.5,
-        phase_per_dim=True, self_modulation_steps=2, topk=8
+        input_dim=input_dim, hidden_dim=48, num_classes=n_classes,
+        num_wavefunctions=8, partial_norm=1.5,
+        phase_per_dim=True, self_modulation_steps=3, topk=12
     )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -834,33 +835,51 @@ def cv_classification_ExtendedQSUP(CCV, y):
         smote = SMOTE(random_state=5)
         X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
 
-        log_dir = os.path.join(LOG_DIR, f"qsup_fold_{fold_idx}")
+        # Ensemble: train 5 models with different seeds, average predictions
+        ENSEMBLE_SIZE = 5
+        ensemble_models = []
+        best_hist = None
 
-        qsup_model, train_loss_hist, val_loss_hist = train_extended_qsup_tb(
-            X_train_res, y_train_res, X_test_scaled, y_test,
-            input_dim=qsup_config['input_dim'],
-            hidden_dim=qsup_config['hidden_dim'],
-            num_classes=qsup_config['num_classes'],
-            num_wavefunctions=qsup_config['num_wavefunctions'],
-            partial_norm=qsup_config['partial_norm'],
-            phase_per_dim=qsup_config['phase_per_dim'],
-            self_modulation_steps=qsup_config['self_modulation_steps'],
-            topk=qsup_config['topk'],
-            epochs=200,
-            patience=25,
-            log_dir=log_dir,
-            device=device
-        )
+        for ens_idx in range(ENSEMBLE_SIZE):
+            torch.manual_seed(5 + ens_idx * 17 + fold_idx * 31)
+            np.random.seed(5 + ens_idx * 17 + fold_idx * 31)
+            log_dir = os.path.join(LOG_DIR, f"qsup_fold_{fold_idx}_ens{ens_idx}")
 
-        qsup_histories.append((train_loss_hist, val_loss_hist))
+            model_i, train_loss_hist, val_loss_hist = train_extended_qsup_tb(
+                X_train_res, y_train_res, X_test_scaled, y_test,
+                input_dim=qsup_config['input_dim'],
+                hidden_dim=qsup_config['hidden_dim'],
+                num_classes=qsup_config['num_classes'],
+                num_wavefunctions=qsup_config['num_wavefunctions'],
+                partial_norm=qsup_config['partial_norm'],
+                phase_per_dim=qsup_config['phase_per_dim'],
+                self_modulation_steps=qsup_config['self_modulation_steps'],
+                topk=qsup_config['topk'],
+                epochs=300,
+                patience=40,
+                log_dir=log_dir,
+                device=device
+            )
+            ensemble_models.append(model_i)
+            if ens_idx == 0:
+                best_hist = (train_loss_hist, val_loss_hist)
 
-        # Evaluate on test set
+        qsup_histories.append(best_hist)
+
+        # Ensemble prediction: average softmax outputs
         X_test_tensor = torch.tensor(X_test_scaled, dtype=torch.float, device=device)
-        qsup_model.eval()
-        with torch.no_grad():
-            test_logits = qsup_model(X_test_tensor)
-            test_proba = F.softmax(test_logits, dim=1).cpu().numpy()
-        test_preds = test_logits.argmax(dim=1).cpu().numpy()
+        avg_proba = np.zeros((len(y_test), n_classes), dtype=np.float32)
+        for model_i in ensemble_models:
+            model_i.eval()
+            with torch.no_grad():
+                logits_i = model_i(X_test_tensor)
+                proba_i = F.softmax(logits_i, dim=1).cpu().numpy()
+            avg_proba += proba_i
+        avg_proba /= ENSEMBLE_SIZE
+        test_proba = avg_proba
+        test_preds = np.argmax(test_proba, axis=1)
+        # Keep first ensemble member as "the model" for saving
+        qsup_model = ensemble_models[0]
 
         all_y_true.extend(y_test)
         all_y_pred.extend(test_preds)
@@ -1164,7 +1183,7 @@ def main():
     gcn_loss_fn = nn.CrossEntropyLoss(weight=gcn_class_weights)
 
     optimizer = TorchAdam(gcn_model.parameters(), lr=10**-2.25)
-    epochs_gcn = 100
+    epochs_gcn = 150
 
     # GCN early stopping
     gcn_patience = 15
@@ -1284,7 +1303,8 @@ def main():
     print("=" * 70)
     print(f"{'Fold':<8} {'MLP Acc':<12} {'MLP AUC':<12} {'QSUP Acc':<12} {'QSUP AUC':<12}")
     print("-" * 70)
-    for i in range(5):
+    n_folds = max(len(mlp_fold_accs), len(qsup_fold_accs))
+    for i in range(n_folds):
         mlp_acc_str = f"{mlp_fold_accs[i]:.4f}" if i < len(mlp_fold_accs) else "N/A"
         mlp_auc_str = f"{mlp_fold_aucs[i]:.4f}" if i < len(mlp_fold_aucs) else "N/A"
         qsup_acc_str = f"{qsup_fold_accs[i]:.4f}" if i < len(qsup_fold_accs) else "N/A"
@@ -1297,6 +1317,16 @@ def main():
     qsup_mean_auc = np.mean(qsup_fold_aucs) if qsup_fold_aucs else 0
     print(f"{'Mean':<8} {mlp_mean_acc:<12.4f} {mlp_mean_auc:<12.4f} {qsup_mean_acc:<12.4f} {qsup_mean_auc:<12.4f}")
     print("=" * 70)
+
+    # ===== META-ENSEMBLE: MLP + QSUP =====
+    # Both used the same StratifiedKFold(random_state=5), so y_true arrays align
+    meta_proba = (np.array(mlp_y_proba) + np.array(qsup_y_proba)) / 2.0
+    meta_preds = (meta_proba >= 0.5).astype(int)
+    meta_acc = accuracy_score(mlp_y_true, meta_preds)
+    meta_auc = roc_auc_score(mlp_y_true, meta_proba)
+    print(f"\n{'META-ENSEMBLE (MLP+QSUP avg):':40s} Accuracy={meta_acc:.4f}  AUC={meta_auc:.4f}")
+    print(confusion_matrix(mlp_y_true, meta_preds))
+    print(classification_report(mlp_y_true, meta_preds, target_names=['Control', 'Alzheimer']))
 
     end_time = time.time()
     print(f"[DONE] total runtime: {end_time - start_time:.2f} seconds")
