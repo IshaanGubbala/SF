@@ -195,6 +195,8 @@ def load_saved_features():
             continue
         if subj_id not in participant_labels:
             continue
+        if subj_id.startswith('zsub'):   # exclude ds006036 photostimulation EEG
+            continue
 
         handcrafted = np.load(f)
         gnn_feat = np.load(gnn_file)
